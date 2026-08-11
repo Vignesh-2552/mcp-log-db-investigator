@@ -1,4 +1,4 @@
-from investigation_server.app import mcp
+from investigation_server.core.app import mcp
 
 _MANUAL_CORRELATION_STEPS = """\
 There is no automatic cross-source correlation tool in this build — you must

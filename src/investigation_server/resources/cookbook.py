@@ -2,7 +2,7 @@ from pathlib import Path
 
 import yaml
 
-from investigation_server.app import mcp
+from investigation_server.core.app import mcp
 
 _COOKBOOK_PATH = Path(__file__).resolve().parent.parent / "data" / "query_cookbook.yaml"
 

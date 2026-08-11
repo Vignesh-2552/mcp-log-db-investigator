@@ -1,8 +1,8 @@
 import json
 
-from investigation_server.app import mcp
-from investigation_server.database import introspect
-from investigation_server.errors import ToolError
+from investigation_server.core.app import mcp
+from investigation_server.core.errors import ToolError
+from investigation_server.integrations.database import introspect
 
 
 @mcp.resource("schema://db/tables")

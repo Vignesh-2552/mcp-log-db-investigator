@@ -2,12 +2,12 @@ from typing import Any
 
 from sqlalchemy import inspect, text
 
-from investigation_server.cache import ttl_cache
-from investigation_server.config import Settings, get_settings
-from investigation_server.database.engine import get_engine
-from investigation_server.errors import GuardrailError
-from investigation_server.logging_config import get_logger
-from investigation_server.redaction import redact_rows
+from investigation_server.core.cache import ttl_cache
+from investigation_server.core.config import Settings, get_settings
+from investigation_server.core.errors import GuardrailError
+from investigation_server.core.logging_config import get_logger
+from investigation_server.core.redaction import redact_rows
+from investigation_server.integrations.database.engine import get_engine
 
 logger = get_logger("database.introspect")
 

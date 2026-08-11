@@ -2,13 +2,13 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from investigation_server.cloudwatch.guardrail import (
+from investigation_server.core.errors import CWGuardrailError
+from investigation_server.integrations.cloudwatch.guardrail import (
     check_bytes_scanned,
     clamp_window,
     poll_query_with_backoff,
     validate_log_groups,
 )
-from investigation_server.errors import CWGuardrailError
 
 ALLOWLIST = frozenset({"/aws/ecs/checkout-svc", "/aws/ecs/payment-svc"})
 

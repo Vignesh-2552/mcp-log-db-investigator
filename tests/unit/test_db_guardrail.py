@@ -1,7 +1,10 @@
 import pytest
 
-from investigation_server.database.guardrail import truncate_cell, validate_sql
-from investigation_server.errors import GuardrailError
+from investigation_server.core.errors import GuardrailError
+from investigation_server.integrations.database.guardrail import (
+    truncate_cell,
+    validate_sql,
+)
 
 
 def test_valid_select_passes():

@@ -1,6 +1,6 @@
 import re
 
-from investigation_server.errors import NewRelicGuardrailError
+from investigation_server.core.errors import NewRelicGuardrailError
 
 # NRQL doesn't have a widely-available AST parser (unlike SQL's sqlglot), so
 # this is a regex-based first line of defence: reject anything that isn't a

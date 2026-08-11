@@ -1,11 +1,11 @@
 import httpx
 
-from investigation_server.app import mcp
-from investigation_server.config import get_settings
-from investigation_server.errors import ToolError
-from investigation_server.newrelic.client import run_nrql
-from investigation_server.newrelic.guardrail import validate_nrql
-from investigation_server.redaction import redact_rows
+from investigation_server.core.app import mcp
+from investigation_server.core.config import get_settings
+from investigation_server.core.errors import ToolError
+from investigation_server.core.redaction import redact_rows
+from investigation_server.integrations.newrelic.client import run_nrql
+from investigation_server.integrations.newrelic.guardrail import validate_nrql
 
 
 def _httpx_error_response(e: httpx.HTTPError) -> dict:

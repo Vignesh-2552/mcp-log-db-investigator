@@ -1,8 +1,8 @@
 import httpx
 
-from investigation_server.config import Settings, get_settings
-from investigation_server.errors import ToolError
-from investigation_server.logging_config import get_logger
+from investigation_server.core.config import Settings, get_settings
+from investigation_server.core.errors import ToolError
+from investigation_server.core.logging_config import get_logger
 
 logger = get_logger("newrelic.client")
 

@@ -5,8 +5,8 @@ import pytest
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from investigation_server.config import get_settings
-from investigation_server.database.engine import reset_engine
+from investigation_server.core.config import get_settings
+from investigation_server.integrations.database.engine import reset_engine
 
 
 @pytest.fixture

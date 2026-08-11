@@ -2,8 +2,8 @@ import time
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
-from investigation_server.errors import CWGuardrailError
-from investigation_server.logging_config import get_logger
+from investigation_server.core.errors import CWGuardrailError
+from investigation_server.core.logging_config import get_logger
 
 logger = get_logger("cloudwatch.guardrail")
 
