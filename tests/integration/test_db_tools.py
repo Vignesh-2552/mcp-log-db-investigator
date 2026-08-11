@@ -1,5 +1,3 @@
-import json
-
 import pytest
 
 pytestmark = pytest.mark.integration
@@ -7,10 +5,9 @@ pytestmark = pytest.mark.integration
 
 @pytest.fixture
 async def db_env(settings_override, tmp_path):
-    await settings_override(
-        audit_log_path=str(tmp_path / "audit.jsonl"),
-    )
-    return tmp_path / "audit.jsonl"
+    # Keep isolated Settings/DB engine caches per test.
+    await settings_override()
+    return tmp_path
 
 
 async def test_db_list_tables_returns_tables(db_env):
@@ -69,18 +66,3 @@ async def test_db_sample_rows_masks_pii(db_env):
     assert result["ok"] is True
     for row in result["data"]["rows"]:
         assert row["email"] == "[REDACTED]"
-
-
-async def test_audit_log_records_each_call(db_env):
-    from investigation_server.database.tools import db_list_tables, db_run_query
-
-    await db_list_tables()
-    await db_run_query("DELETE FROM public.orders")  # denied
-
-    lines = db_env.read_text(encoding="utf-8").strip().splitlines()
-    records = [json.loads(line) for line in lines]
-    outcomes = [r["outcome"] for r in records]
-    assert "success" in outcomes
-    assert "denied" in outcomes
-    for r in records:
-        assert "context_id" in r and r["context_id"]

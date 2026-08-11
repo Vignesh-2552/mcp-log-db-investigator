@@ -4,7 +4,6 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from investigation_server.app import mcp
-from investigation_server.audit import audited
 from investigation_server.config import get_settings
 from investigation_server.database import introspect
 from investigation_server.database.engine import get_engine
@@ -38,7 +37,6 @@ def _sqlalchemy_error_response(e: SQLAlchemyError) -> dict:
 
 
 @mcp.tool()
-@audited("db_list_tables")
 async def db_list_tables(schema: str | None = None) -> dict:
     """List tables with row estimates and comments. Cached ~10 min."""
     try:
@@ -49,7 +47,6 @@ async def db_list_tables(schema: str | None = None) -> dict:
 
 
 @mcp.tool()
-@audited("db_describe_table")
 async def db_describe_table(table: str) -> dict:
     """Describe a table's columns, types, nullability, PK/FK, and indexes.
     The main grounding tool for generating a query against unfamiliar schema."""
@@ -61,7 +58,6 @@ async def db_describe_table(table: str) -> dict:
 
 
 @mcp.tool()
-@audited("db_sample_rows")
 async def db_sample_rows(table: str, limit: int = 5) -> dict:
     """Return sample rows from a table (PII-masked) to learn value formats, e.g. status enums."""
     settings = get_settings()
@@ -73,7 +69,6 @@ async def db_sample_rows(table: str, limit: int = 5) -> dict:
 
 
 @mcp.tool()
-@audited("db_explain_query")
 async def db_explain_query(sql: str) -> dict:
     """Run EXPLAIN (FORMAT JSON) on a validated SELECT. Run before expensive queries."""
     settings = get_settings()
@@ -90,7 +85,6 @@ async def db_explain_query(sql: str) -> dict:
 
 
 @mcp.tool()
-@audited("db_run_query")
 async def db_run_query(sql: str, limit: int = 200) -> dict:
     """Run a read-only SELECT against the replica. Returns rows, columns, row count, and elapsed ms."""
     settings = get_settings()
@@ -129,7 +123,6 @@ async def db_run_query(sql: str, limit: int = 200) -> dict:
 
 
 @mcp.tool()
-@audited("db_search_by_identifier")
 async def db_search_by_identifier(identifier: str, id_type: str) -> dict:
     """Search tables for rows matching an identifier (order_id, user_id, payment_id, request_id)."""
     settings = get_settings()

@@ -1,12 +1,16 @@
 from functools import lru_cache
-from pathlib import Path
 
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=False)
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
 
     # Database
     db_url: str = "postgresql+asyncpg://localhost:5432/appdb"
@@ -39,7 +43,6 @@ class Settings(BaseSettings):
     server_host: str = "0.0.0.0"
     server_port: int = 8000
     server_path: str = "/mcp"
-    audit_log_path: Path = Path("./audit.jsonl")
     pii_redaction: bool = True
     log_level: str = "INFO"
     log_format: str = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"

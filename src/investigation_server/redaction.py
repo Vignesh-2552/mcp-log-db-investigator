@@ -32,8 +32,6 @@ PII_COLUMN_NAMES = {
     "password_hash",
 }
 
-SECRET_ARG_NAMES = {"password", "token", "secret", "api_key", "authorization", "access_token"}
-
 
 def enabled(settings: Settings | None = None) -> bool:
     return (settings or get_settings()).pii_redaction
@@ -67,21 +65,3 @@ def redact_log_event(message: str, settings: Settings | None = None) -> str:
     if not enabled(settings):
         return message
     return redact_text(message)
-
-
-def redact_arguments(kwargs: dict[str, Any]) -> dict[str, Any]:
-    """Redact tool-call arguments before they are written to the audit log.
-
-    Applied unconditionally (independent of PII_REDACTION) so the audit
-    log never leaks raw PII/secrets even if response-path redaction is
-    toggled off.
-    """
-    redacted: dict[str, Any] = {}
-    for key, value in kwargs.items():
-        if key.lower() in SECRET_ARG_NAMES:
-            redacted[key] = "[REDACTED]"
-        elif isinstance(value, str):
-            redacted[key] = redact_text(value)
-        else:
-            redacted[key] = value
-    return redacted

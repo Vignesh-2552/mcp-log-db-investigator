@@ -12,7 +12,7 @@ full design.
 uv sync
 copy .env.example .env
 # Edit .env with your DB_URL and other settings
-uv run pytest tests/unit      # guardrail/redaction/audit tests, no external deps
+uv run pytest tests/unit      # guardrail/redaction tests, no external deps
 uv run pytest tests/integration -m integration   # requires your Postgres to be reachable
 uv run investigation-server    # starts the MCP server over HTTP on port 8000
 ```
@@ -70,8 +70,8 @@ Every `db_*`/`cw_*` call goes through a guardrail layer *before* any network
 I/O: SQL is parsed with `sqlglot` and rejected unless it's a single
 `SELECT`/`WITH...SELECT` with no dangerous functions; CloudWatch calls are
 checked against a log-group allowlist, a time-window cap, and a bytes-scanned
-cost ceiling. Every call (including rejected ones) is written to `audit.jsonl`
-with redacted arguments. See design doc §6 for the full model.
+cost ceiling. Results and any log messages are redacted before returning. See
+design doc §6 for the full model.
 
 ## Testing
 

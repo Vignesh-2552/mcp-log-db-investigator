@@ -86,7 +86,7 @@ There are two options:
 | Option | How it works | Verdict |
 |---|---|---|
 | **A. Server-side generation** | A `generate_sql(question)` tool calls an LLM inside the server to produce SQL. | ❌ Duplicate LLM cost, extra latency, server needs its own API key, loses conversation context. |
-| **B. Client-side generation + server-side validation** ✅ | The server exposes **schema** and **log-field metadata** as resources/tools. The client model (Claude/Cursor) writes the query. The server **validates and executes** it. | ✅ Recommended. The model already has the ticket context; the server stays a thin, auditable, safe execution layer. |
+| **B. Client-side generation + server-side validation** ✅ | The server exposes **schema** and **log-field metadata** as resources/tools. The client model (Claude/Cursor) writes the query. The server **validates and executes** it. | ✅ Recommended. The model already has the ticket context; the server stays a thin, safety-focused execution layer. |
 
 **We adopt Option B.** "Query generation" in this system means: *the server supplies enough structured context that the client model can reliably generate a correct query, and rejects anything unsafe.*
 
@@ -119,7 +119,7 @@ All tools return structured JSON. All are read-only.
 
 | Tool | Purpose |
 |---|---|
-| `investigation_start` | Takes ticket id + description + time window. Returns a structured investigation plan and creates an audit context id that all subsequent calls attach to. |
+| `investigation_start` | Takes ticket id + description + time window. Returns a structured investigation plan. |
 | `trace_request` | Given a `request_id` / `correlation_id`, fans out to CloudWatch across all service log groups **and** the DB, returns a merged, time-ordered timeline. This is the highest-value tool — it's the manual step engineers repeat most. |
 
 ### 4.4 Resources & Prompts
@@ -193,7 +193,7 @@ This is the section that must not be compromised — the server has production d
 
 - **PII redaction** in the response path: regex + column-name-based masking for email, phone, PAN/Aadhaar, card numbers, auth tokens. Applied to both DB rows and log messages before they leave the server.
 - **No secrets in tool arguments.** Credentials come from environment / AWS profile / Secrets Manager only.
-- **Audit log.** Every tool call writes JSONL: timestamp, context_id, tool, arguments (redacted), rows returned, bytes scanned, duration, outcome. This is non-negotiable — it's how you answer "what did the AI look at?"
+- **Server-side logging.** Operational log messages capture guardrail decisions and errors so issues can be debugged without exposing sensitive data to the client.
 
 ### 6.4 Human-in-the-Loop
 
@@ -207,7 +207,7 @@ This is the section that must not be compromised — the server has production d
 | Mode | Transport | When |
 |---|---|---|
 | Local dev / single engineer | `stdio` | Phase 1 — simplest, credentials stay on the laptop |
-| Shared team server | Streamable HTTP + OAuth/bearer | Phase 3 — central audit, no local prod creds |
+| Shared team server | Streamable HTTP + OAuth/bearer | Phase 3 — shared deployment, no local prod creds |
 
 Start with **stdio**. Move to HTTP only when more than ~3 engineers need it.
 
@@ -232,7 +232,6 @@ CW_MAX_WINDOW_HOURS=168
 CW_MAX_BYTES_SCANNED=5000000000
 
 # Server
-AUDIT_LOG_PATH=/var/log/mcp/audit.jsonl
 PII_REDACTION=on
 ```
 
@@ -268,7 +267,7 @@ The quality of the error messages directly determines how well the model self-co
 ## 9. Observability
 
 - Per-tool metrics: call count, p50/p95 latency, error rate, rows returned, bytes scanned.
-- Weekly review of the audit log: which tools are actually used, which generated queries got rejected and why (this feeds the cookbook).
+- Weekly review of tool usage and guardrail rejections to improve future query quality (feeds the cookbook).
 - Track the real outcome metric: **median time-to-root-cause per ticket**, before vs after.
 
 ## 10. Delivery Phases
@@ -345,7 +344,7 @@ def validate_sql(sql: str, allowlist: set[str]) -> str:
 def db_run_query(sql: str, limit: int = 200) -> dict:
     """Run a read-only SELECT against the replica. Returns rows and metadata."""
     safe_sql = validate_sql(sql, ALLOWLIST)
-    ...  # execute with statement_timeout, clamp limit, redact, audit
+    ...  # execute with statement_timeout, clamp limit, redact
 
 
 @mcp.tool()
@@ -353,7 +352,7 @@ def cw_run_insights_query(
     log_groups: list[str], query: str, start: str, end: str, limit: int = 100
 ) -> dict:
     """Run a CloudWatch Logs Insights query and wait for results."""
-    ...  # StartQuery -> poll GetQueryResults -> redact -> audit
+    ...  # StartQuery -> poll GetQueryResults -> redact
 
 
 if __name__ == "__main__":

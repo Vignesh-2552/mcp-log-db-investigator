@@ -1,7 +1,6 @@
 import httpx
 
 from investigation_server.app import mcp
-from investigation_server.audit import audited
 from investigation_server.config import get_settings
 from investigation_server.errors import ToolError
 from investigation_server.newrelic.client import run_nrql
@@ -22,7 +21,6 @@ def _httpx_error_response(e: httpx.HTTPError) -> dict:
 
 
 @mcp.tool()
-@audited("nr_run_nrql_query")
 async def nr_run_nrql_query(query: str, limit: int = 100) -> dict:
     """Run a read-only NRQL query against New Relic (Log/Metric/event data).
     Only SELECT queries are permitted; LIMIT is enforced/clamped server-side."""

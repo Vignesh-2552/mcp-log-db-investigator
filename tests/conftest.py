@@ -5,7 +5,6 @@ import pytest
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from investigation_server.audit import get_audit_logger
 from investigation_server.config import get_settings
 from investigation_server.database.engine import reset_engine
 
@@ -19,12 +18,10 @@ async def settings_override(monkeypatch: pytest.MonkeyPatch):
         for key, value in env.items():
             monkeypatch.setenv(key.upper(), value)
         get_settings.cache_clear()
-        get_audit_logger.cache_clear()
         await reset_engine()
 
     yield _apply
     get_settings.cache_clear()
-    get_audit_logger.cache_clear()
     await reset_engine()
 
 

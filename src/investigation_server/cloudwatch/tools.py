@@ -5,7 +5,6 @@ from datetime import UTC, datetime, timedelta
 from botocore.exceptions import BotoCoreError, ClientError
 
 from investigation_server.app import mcp
-from investigation_server.audit import audited
 from investigation_server.cloudwatch.client import get_logs_client, get_metrics_client
 from investigation_server.cloudwatch.guardrail import (
     check_bytes_scanned,
@@ -38,7 +37,6 @@ def _aws_error_response(e: Exception) -> dict:
 
 
 @mcp.tool()
-@audited("cw_list_log_groups")
 def cw_list_log_groups(prefix: str | None = None) -> dict:
     """List log groups (name, retention, stored bytes), filtered to the allowlist."""
     settings = get_settings()
@@ -66,7 +64,6 @@ def cw_list_log_groups(prefix: str | None = None) -> dict:
 
 
 @mcp.tool()
-@audited("cw_describe_log_fields")
 def cw_describe_log_fields(log_group: str) -> dict:
     """Sample recent events from a log group and report discovered JSON fields + frequency,
     to ground Logs Insights query generation."""
@@ -118,7 +115,6 @@ def cw_describe_log_fields(log_group: str) -> dict:
 
 
 @mcp.tool()
-@audited("cw_run_insights_query")
 def cw_run_insights_query(
     log_groups: list[str], query: str, start: str, end: str, limit: int = 100
 ) -> dict:
@@ -197,7 +193,6 @@ def cw_run_insights_query(
 
 
 @mcp.tool()
-@audited("cw_filter_events")
 def cw_filter_events(log_group: str, pattern: str, minutes: int = 30) -> dict:
     """Filter raw log events by pattern over the last `minutes`. Cheaper than Insights
     for simple greps."""
@@ -240,7 +235,6 @@ def cw_filter_events(log_group: str, pattern: str, minutes: int = 30) -> dict:
 
 
 @mcp.tool()
-@audited("cw_get_metric_stats")
 def cw_get_metric_stats(
     namespace: str,
     metric: str,
