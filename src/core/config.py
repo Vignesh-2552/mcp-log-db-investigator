@@ -32,7 +32,6 @@ class Settings(BaseSettings):
     cloudwatch_secret_access_key: SecretStr | None = None
     cloudwatch_region: str | None = None
     cloudwatch_allowed_log_group: str | None = None
-    cw_log_group_allowlist: str = ""
     cw_max_window_hours: int = 168
     cw_default_window_hours: int = 24
     cw_max_bytes_scanned: int = 5_000_000_000
@@ -68,10 +67,11 @@ class Settings(BaseSettings):
 
     @property
     def cw_log_group_allowlist_set(self) -> frozenset[str]:
-        items = {item.strip() for item in self.cw_log_group_allowlist.split(",") if item.strip()}
-        if self.cloudwatch_allowed_log_group:
-            items.add(self.cloudwatch_allowed_log_group.strip())
-        return frozenset(items)
+        if not self.cloudwatch_allowed_log_group:
+            return frozenset()
+        return frozenset(
+            item.strip() for item in self.cloudwatch_allowed_log_group.split(",") if item.strip()
+        )
 
     @property
     def db_dsn(self) -> str:
