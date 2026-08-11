@@ -1,7 +1,7 @@
 import re
 from typing import Any
 
-from investigation_server.core.config import Settings, get_settings
+from core.config import Settings, get_settings
 
 # Order matters: more specific patterns before more general ones.
 _PATTERNS: list[tuple[str, re.Pattern[str]]] = [

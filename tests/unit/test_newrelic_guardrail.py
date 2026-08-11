@@ -1,7 +1,7 @@
 import pytest
 
-from investigation_server.core.errors import NewRelicGuardrailError
-from investigation_server.integrations.newrelic.guardrail import validate_nrql
+from core.errors import NewRelicGuardrailError
+from integrations.newrelic.guardrail import validate_nrql
 
 
 def test_valid_select_passes():

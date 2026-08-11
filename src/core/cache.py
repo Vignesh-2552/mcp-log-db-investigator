@@ -6,7 +6,7 @@ from typing import Any, TypeVar
 from cachetools import TTLCache
 from cachetools.keys import hashkey
 
-from investigation_server.core.logging_config import get_logger
+from core.logging_config import get_logger
 
 logger = get_logger("cache")
 

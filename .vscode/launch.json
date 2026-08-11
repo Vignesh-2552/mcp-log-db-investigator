@@ -5,7 +5,7 @@
       "name": "Investigation Server (HTTP)",
       "type": "debugpy",
       "request": "launch",
-      "module": "investigation_server.server",
+      "module": "server",
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "envFile": "${workspaceFolder}/.env",

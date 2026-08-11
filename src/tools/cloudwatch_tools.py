@@ -4,16 +4,16 @@ from datetime import UTC, datetime, timedelta
 
 from botocore.exceptions import BotoCoreError, ClientError
 
-from investigation_server.core.app import mcp
-from investigation_server.core.config import get_settings
-from investigation_server.core.errors import ToolError
-from investigation_server.core.logging_config import get_logger
-from investigation_server.core.redaction import redact_log_event
-from investigation_server.integrations.cloudwatch.client import (
+from core.app import mcp
+from core.config import get_settings
+from core.errors import ToolError
+from core.logging_config import get_logger
+from core.redaction import redact_log_event
+from integrations.cloudwatch.client import (
     get_logs_client,
     get_metrics_client,
 )
-from investigation_server.integrations.cloudwatch.guardrail import (
+from integrations.cloudwatch.guardrail import (
     check_bytes_scanned,
     clamp_window,
     poll_query_with_backoff,

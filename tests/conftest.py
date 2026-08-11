@@ -5,8 +5,8 @@ import pytest
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from investigation_server.core.config import get_settings
-from investigation_server.integrations.database.engine import reset_engine
+from core.config import get_settings
+from integrations.database.engine import reset_engine
 
 
 @pytest.fixture
@@ -30,14 +30,20 @@ async def _check_postgres() -> bool:
     genuine connectivity failures as "unreachable" (-> skip integration
     tests) — a broken driver/config (e.g. missing asyncpg) is a real bug
     and is allowed to raise so it fails loudly instead of being silently
-    skipped."""
+    skipped.
+
+    asyncpg can raise a raw TimeoutError/OSError for network-level
+    failures (connect timeout, refused, unreachable) before SQLAlchemy
+    gets a chance to wrap it as OperationalError — those count as
+    "unreachable" too, same as OperationalError. Anything else (e.g.
+    ModuleNotFoundError for a missing driver) still propagates."""
     settings = get_settings()
     engine = create_async_engine(settings.db_dsn, connect_args={"timeout": 2})
     try:
         async with engine.connect():
             pass
         return True
-    except OperationalError:
+    except (OperationalError, TimeoutError, OSError):
         return False
     finally:
         await engine.dispose()

@@ -1,7 +1,7 @@
 import logging
 import sys
 
-from investigation_server.core.config import Settings, get_settings
+from core.config import Settings, get_settings
 
 
 def setup_logging(settings: Settings | None = None) -> logging.Logger:

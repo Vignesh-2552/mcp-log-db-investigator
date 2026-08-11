@@ -4,8 +4,8 @@ from contextlib import asynccontextmanager
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 
-from investigation_server.core.config import Settings, get_settings
-from investigation_server.core.logging_config import get_logger
+from core.config import Settings, get_settings
+from core.logging_config import get_logger
 
 logger = get_logger("database.engine")
 

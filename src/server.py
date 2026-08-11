@@ -1,9 +1,9 @@
-from investigation_server import prompts as _prompts  # noqa: F401
-from investigation_server import resources as _resources  # noqa: F401
-from investigation_server import tools as _tools  # noqa: F401
-from investigation_server.core.app import mcp
-from investigation_server.core.config import get_settings
-from investigation_server.core.logging_config import get_logger, setup_logging
+import prompts as _prompts  # noqa: F401
+import resources as _resources  # noqa: F401
+import tools as _tools  # noqa: F401
+from core.app import mcp
+from core.config import get_settings
+from core.logging_config import get_logger, setup_logging
 
 logger = get_logger("server")
 

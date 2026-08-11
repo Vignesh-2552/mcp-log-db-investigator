@@ -3,8 +3,8 @@ from dataclasses import dataclass
 import sqlglot
 from sqlglot import exp
 
-from investigation_server.core.errors import GuardrailError
-from investigation_server.core.logging_config import get_logger
+from core.errors import GuardrailError
+from core.logging_config import get_logger
 
 logger = get_logger("database.guardrail")
 

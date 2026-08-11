@@ -2,8 +2,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from investigation_server.core.errors import CWGuardrailError
-from investigation_server.integrations.cloudwatch.guardrail import (
+from core.errors import CWGuardrailError
+from integrations.cloudwatch.guardrail import (
     check_bytes_scanned,
     clamp_window,
     poll_query_with_backoff,

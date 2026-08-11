@@ -1,8 +1,8 @@
 import logging
 from io import StringIO
 
-from investigation_server.core.config import Settings
-from investigation_server.core.logging_config import get_logger, setup_logging
+from core.config import Settings
+from core.logging_config import get_logger, setup_logging
 
 
 def test_setup_logging_defaults():
