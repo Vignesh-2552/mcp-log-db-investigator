@@ -1,6 +1,4 @@
-def main():
-    print("Hello from mcp-tool!")
-
+from investigation_server.server import main
 
 if __name__ == "__main__":
     main()

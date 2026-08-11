@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "investigation": {
+      "command": "uv",
+      "args": ["run", "--directory", "D:/Vignesh/mcp_tool", "server.py"],
+      "env": {
+        "AWS_PROFILE": "mcp-readonly"
+      }
+    }
+  }
+}
