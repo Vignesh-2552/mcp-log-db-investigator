@@ -124,7 +124,11 @@ async def db_run_query(sql: str, limit: int = 200) -> dict:
 
 @mcp.tool()
 async def db_search_by_identifier(identifier: str, id_type: str) -> dict:
-    """Search tables for rows matching an identifier (order_id, user_id, payment_id, request_id)."""
+    """Search for rows matching an identifier. `id_type` is any column-name-like
+    string (e.g. "order_id", "customer_id", "transaction_id") — resolved
+    dynamically against the DB's own catalog, not a fixed list. Searches every
+    table with a matching column name, plus the entity's own table (e.g.
+    "order_id" also checks the "orders" table's primary key)."""
     settings = get_settings()
     try:
         result = await introspect.search_by_identifier(identifier, id_type, settings)

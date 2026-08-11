@@ -48,7 +48,13 @@ class ValidatedQuery:
 
 
 def _table_name(table: exp.Table) -> str:
-    return f"{table.db or 'public'}.{table.name}".lower()
+    """Reports the table as referenced in the query — schema-qualified if
+    the query qualified it, unqualified otherwise. Doesn't force a schema
+    (e.g. 'public'): the DB itself resolves unqualified names via its own
+    search_path, and this server isn't scoped to any single schema."""
+    if table.db:
+        return f"{table.db}.{table.name}".lower()
+    return table.name.lower()
 
 
 def _function_name(node: exp.Func) -> str:

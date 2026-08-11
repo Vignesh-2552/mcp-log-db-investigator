@@ -25,6 +25,13 @@ class Settings(BaseSettings):
     aws_profile: str | None = None
     aws_access_key_id: str | None = None
     aws_secret_access_key: SecretStr | None = None
+    # CLOUDWATCH_* takes priority over the AWS_* fields above when set —
+    # lets CloudWatch use a dedicated key/region separate from other AWS
+    # usage (e.g. S3) without them stepping on each other in .env.
+    cloudwatch_access_key_id: str | None = None
+    cloudwatch_secret_access_key: SecretStr | None = None
+    cloudwatch_region: str | None = None
+    cloudwatch_allowed_log_group: str | None = None
     cw_log_group_allowlist: str = ""
     cw_max_window_hours: int = 168
     cw_default_window_hours: int = 24
@@ -48,10 +55,23 @@ class Settings(BaseSettings):
     log_format: str = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 
     @property
+    def cloudwatch_effective_region(self) -> str:
+        return self.cloudwatch_region or self.aws_region
+
+    @property
+    def cloudwatch_effective_access_key_id(self) -> str | None:
+        return self.cloudwatch_access_key_id or self.aws_access_key_id
+
+    @property
+    def cloudwatch_effective_secret_access_key(self) -> SecretStr | None:
+        return self.cloudwatch_secret_access_key or self.aws_secret_access_key
+
+    @property
     def cw_log_group_allowlist_set(self) -> frozenset[str]:
-        return frozenset(
-            item.strip() for item in self.cw_log_group_allowlist.split(",") if item.strip()
-        )
+        items = {item.strip() for item in self.cw_log_group_allowlist.split(",") if item.strip()}
+        if self.cloudwatch_allowed_log_group:
+            items.add(self.cloudwatch_allowed_log_group.strip())
+        return frozenset(items)
 
     @property
     def db_dsn(self) -> str:

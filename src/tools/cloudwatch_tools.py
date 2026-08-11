@@ -122,7 +122,12 @@ def cw_run_insights_query(
     log_groups: list[str], query: str, start: str, end: str, limit: int = 100
 ) -> dict:
     """Run a CloudWatch Logs Insights query and wait for results (StartQuery -> poll ->
-    GetQueryResults). Logs bytes scanned on every call so cost stays visible."""
+    GetQueryResults). Logs bytes scanned on every call so cost stays visible.
+
+    `limit` is the authoritative row cap sent to AWS's StartQuery API — set
+    it directly (e.g. limit=10 for "last 10 logs") rather than relying on a
+    `| limit N` clause inside `query`, which does not reliably cap the
+    result count on its own."""
     settings = get_settings()
     query_id: str | None = None
     bytes_scanned: int | None = None

@@ -13,9 +13,16 @@ def test_valid_select_passes():
     assert "LIMIT 500" in result.sql.upper()
 
 
-def test_unqualified_table_defaults_to_public_schema():
+def test_unqualified_table_stays_unqualified():
+    """No forced 'public' schema — unqualified names resolve via the DB's
+    own search_path, since this server isn't scoped to a single schema."""
     result = validate_sql("SELECT * FROM orders", max_rows=500)
-    assert result.tables == ["public.orders"]
+    assert result.tables == ["orders"]
+
+
+def test_qualified_table_with_non_public_schema_preserved():
+    result = validate_sql("SELECT * FROM private.orders", max_rows=500)
+    assert result.tables == ["private.orders"]
 
 
 def test_stacked_statements_rejected():
