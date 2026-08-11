@@ -1,12 +1,33 @@
 import boto3
 
 from investigation_server.config import Settings, get_settings
+from investigation_server.logging_config import get_logger
+
+logger = get_logger("cloudwatch.client")
 
 _logs_client = None
 _metrics_client = None
 
 
+def _auth_mode(settings: Settings) -> str:
+    if settings.aws_access_key_id and settings.aws_secret_access_key:
+        return "access_key"
+    if settings.aws_profile:
+        return "profile"
+    return "default_chain"
+
+
 def _session(settings: Settings) -> boto3.Session:
+    """Explicit AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY take priority over
+    AWS_PROFILE when both are set in .env; falling back further to boto3's
+    default credential chain (env vars it recognizes natively, instance
+    role, etc.) if neither is configured."""
+    if settings.aws_access_key_id and settings.aws_secret_access_key:
+        return boto3.Session(
+            aws_access_key_id=settings.aws_access_key_id,
+            aws_secret_access_key=settings.aws_secret_access_key.get_secret_value(),
+            region_name=settings.aws_region,
+        )
     return boto3.Session(profile_name=settings.aws_profile, region_name=settings.aws_region)
 
 
@@ -15,6 +36,11 @@ def get_logs_client(settings: Settings | None = None):
     global _logs_client
     if _logs_client is None:
         settings = settings or get_settings()
+        logger.info(
+            "Initializing boto3 CloudWatch Logs client (region=%s, auth=%s)",
+            settings.aws_region,
+            _auth_mode(settings),
+        )
         _logs_client = _session(settings).client("logs")
     return _logs_client
 
@@ -23,6 +49,11 @@ def get_metrics_client(settings: Settings | None = None):
     global _metrics_client
     if _metrics_client is None:
         settings = settings or get_settings()
+        logger.info(
+            "Initializing boto3 CloudWatch Metrics client (region=%s, auth=%s)",
+            settings.aws_region,
+            _auth_mode(settings),
+        )
         _metrics_client = _session(settings).client("cloudwatch")
     return _metrics_client
 
@@ -30,5 +61,7 @@ def get_metrics_client(settings: Settings | None = None):
 def reset_clients() -> None:
     """Test helper to force client re-creation after settings change."""
     global _logs_client, _metrics_client
+    if _logs_client is not None or _metrics_client is not None:
+        logger.info("Resetting boto3 CloudWatch clients")
     _logs_client = None
     _metrics_client = None

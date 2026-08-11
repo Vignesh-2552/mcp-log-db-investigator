@@ -6,7 +6,10 @@ from investigation_server.cache import ttl_cache
 from investigation_server.config import Settings, get_settings
 from investigation_server.database.engine import get_engine
 from investigation_server.errors import GuardrailError
+from investigation_server.logging_config import get_logger
 from investigation_server.redaction import redact_rows
+
+logger = get_logger("database.introspect")
 
 
 def _split_table(table: str) -> tuple[str, str]:

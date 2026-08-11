@@ -3,6 +3,9 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 from investigation_server.errors import CWGuardrailError
+from investigation_server.logging_config import get_logger
+
+logger = get_logger("cloudwatch.guardrail")
 
 # Poll with backoff, capped at the caller's max_wait_s.
 _BACKOFF_SCHEDULE: tuple[float, ...] = (0.5, 1, 2, 4, 8, 8, 8, 8, 8, 8, 8, 8)
@@ -12,14 +15,17 @@ _RUNNING_STATUSES = {"Running", "Scheduled"}
 
 def validate_log_groups(requested: list[str], allowlist: frozenset[str]) -> list[str]:
     if not requested:
+        logger.warning("CloudWatch guardrail error: no log groups specified")
         raise CWGuardrailError(rule="no_log_groups", message="At least one log group must be specified.")
     disallowed = [g for g in requested if g not in allowlist]
     if disallowed:
+        logger.warning("CloudWatch guardrail error (log_group_not_allowed): %s disallowed", disallowed)
         raise CWGuardrailError(
             rule="log_group_not_allowed",
             message=f"Log group(s) not allowed: {', '.join(disallowed)}.",
             allowed=sorted(allowlist),
         )
+    logger.debug("CloudWatch log groups validated: %s", requested)
     return requested
 
 

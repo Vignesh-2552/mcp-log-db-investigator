@@ -36,3 +36,7 @@ class GuardrailError(ToolError):
 
 class CWGuardrailError(ToolError):
     """Raised by the CloudWatch guardrail layer (cw/guardrail.py)."""
+
+
+class NewRelicGuardrailError(ToolError):
+    """Raised by the New Relic NRQL guardrail layer (newrelic/guardrail.py)."""

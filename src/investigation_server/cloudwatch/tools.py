@@ -15,7 +15,10 @@ from investigation_server.cloudwatch.guardrail import (
 )
 from investigation_server.config import get_settings
 from investigation_server.errors import ToolError
+from investigation_server.logging_config import get_logger
 from investigation_server.redaction import redact_log_event
+
+logger = get_logger("cloudwatch.tools")
 
 _DESCRIBE_FIELDS_SAMPLE_SIZE = 50
 _FILTER_EVENTS_CAP = 1000
@@ -30,6 +33,7 @@ def _epoch_millis(dt: datetime) -> int:
 
 
 def _aws_error_response(e: Exception) -> dict:
+    logger.error("AWS CloudWatch API error: %s", e, exc_info=True)
     return ToolError(rule="aws_error", message="AWS CloudWatch call failed.", detail=str(e)).to_response()
 
 

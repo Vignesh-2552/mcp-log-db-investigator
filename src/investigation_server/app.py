@@ -1,4 +1,7 @@
 from fastmcp import FastMCP
+from investigation_server.logging_config import get_logger
+
+logger = get_logger("app")
 
 # The single shared FastMCP instance. Lives in its own module (nothing else)
 # so that submodules can `from investigation_server.app import mcp` without
@@ -10,3 +13,5 @@ from fastmcp import FastMCP
 # re-triggers the whole registration chain under a second module identity
 # and blows up with a circular ImportError partway through.
 mcp = FastMCP("investigation-server")
+logger.debug("Initialized FastMCP instance: investigation-server")
+

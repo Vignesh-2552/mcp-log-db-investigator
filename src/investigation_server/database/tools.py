@@ -14,13 +14,17 @@ from investigation_server.database.guardrail import (
     validate_sql,
 )
 from investigation_server.errors import ToolError
+from investigation_server.logging_config import get_logger
 from investigation_server.redaction import redact_rows
+
+logger = get_logger("database.tools")
 
 
 def _sqlalchemy_error_response(e: SQLAlchemyError) -> dict:
     detail = str(e.orig) if getattr(e, "orig", None) else str(e)
     lowered = detail.lower()
     if "statement timeout" in lowered or "canceling statement" in lowered:
+        logger.warning("Database query statement timeout: %s", detail)
         return ToolError(
             rule="query_timeout",
             message="Query exceeded the statement timeout.",
@@ -29,6 +33,7 @@ def _sqlalchemy_error_response(e: SQLAlchemyError) -> dict:
                 "Use db_explain_query to inspect the plan before retrying."
             ),
         ).to_response()
+    logger.error("Database query execution failed: %s", detail, exc_info=True)
     return ToolError(rule="query_execution_error", message="Query failed to execute.", detail=detail).to_response()
 
 
@@ -99,6 +104,7 @@ async def db_run_query(sql: str, limit: int = 200) -> dict:
             columns = list(result.keys())
             raw_rows = result.fetchall()
         elapsed_ms = (time.perf_counter() - started) * 1000
+        logger.info("Executed db_run_query: %d rows returned in %.2f ms", len(raw_rows), elapsed_ms)
     except ToolError as e:
         return e.to_response()
     except SQLAlchemyError as e:

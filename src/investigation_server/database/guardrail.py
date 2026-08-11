@@ -4,6 +4,9 @@ import sqlglot
 from sqlglot import exp
 
 from investigation_server.errors import GuardrailError
+from investigation_server.logging_config import get_logger
+
+logger = get_logger("database.guardrail")
 
 DIALECT = "postgres"
 
@@ -101,14 +104,18 @@ def validate_sql(
     a specific machine-readable `rule` on the first violation found, so the
     client model gets a self-correctable error rather than a bare denial.
     """
+    logger.debug("Validating SQL query (max_rows=%d, requested_limit=%s)", max_rows, requested_limit)
     try:
         statements = [s for s in sqlglot.parse(sql, read=DIALECT) if s is not None]
     except Exception as e:
+        logger.warning("SQL validation failed (rule=parse_error): %s", e)
         raise GuardrailError(rule="parse_error", message="Could not parse SQL.", detail=str(e)) from e
 
     if len(statements) == 0:
+        logger.warning("SQL validation failed: No statement found")
         raise GuardrailError(rule="parse_error", message="No SQL statement found.")
     if len(statements) > 1:
+        logger.warning("SQL validation failed (rule=multiple_statements): Found %d statements", len(statements))
         raise GuardrailError(
             rule="multiple_statements",
             message="Exactly one SQL statement is allowed per call.",
@@ -118,6 +125,7 @@ def validate_sql(
     tree = statements[0]
 
     if not isinstance(tree, (exp.Select, exp.With)):
+        logger.warning("SQL validation failed (rule=root_not_select): Root node was %s", type(tree).__name__)
         raise GuardrailError(
             rule="root_not_select",
             message="Only SELECT and WITH ... SELECT statements are permitted.",
@@ -126,6 +134,7 @@ def validate_sql(
 
     for node in tree.walk():
         if isinstance(node, BLOCKED_NODES):
+            logger.warning("SQL validation failed (rule=blocked_operation): Node %s", type(node).__name__)
             raise GuardrailError(
                 rule="blocked_operation",
                 message=f"Blocked operation: {type(node).__name__}.",
@@ -134,6 +143,7 @@ def validate_sql(
         if isinstance(node, exp.Func):
             fname = _function_name(node)
             if fname in DANGEROUS_FUNCTIONS:
+                logger.warning("SQL validation failed (rule=blocked_function): Function %s()", fname)
                 raise GuardrailError(
                     rule="blocked_function",
                     message=f"Blocked function call: {fname}().",
@@ -149,6 +159,7 @@ def validate_sql(
 
     tree, limit = clamp_and_inject_limit(tree, max_rows, requested_limit)
 
+    logger.debug("SQL validation successful. Referenced tables: %s, injected limit: %d", referenced_tables, limit)
     return ValidatedQuery(sql=tree.sql(dialect=DIALECT), tables=referenced_tables, limit=limit)
 
 

@@ -6,6 +6,10 @@ from typing import Any, TypeVar
 from cachetools import TTLCache
 from cachetools.keys import hashkey
 
+from investigation_server.logging_config import get_logger
+
+logger = get_logger("cache")
+
 F = TypeVar("F", bound=Callable[..., Any])
 
 
@@ -29,8 +33,11 @@ def ttl_cache(maxsize: int = 128, ttl_seconds: int = 600) -> Callable[[F], F]:
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
                 key = hashkey(*args, **kwargs)
                 try:
-                    return cache[key]
+                    res = cache[key]
+                    logger.debug("Cache hit for %s", func.__name__)
+                    return res
                 except KeyError:
+                    logger.debug("Cache miss for %s", func.__name__)
                     result = await func(*args, **kwargs)
                     cache[key] = result
                     return result
@@ -42,8 +49,11 @@ def ttl_cache(maxsize: int = 128, ttl_seconds: int = 600) -> Callable[[F], F]:
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             key = hashkey(*args, **kwargs)
             try:
-                return cache[key]
+                res = cache[key]
+                logger.debug("Cache hit for %s", func.__name__)
+                return res
             except KeyError:
+                logger.debug("Cache miss for %s", func.__name__)
                 result = func(*args, **kwargs)
                 cache[key] = result
                 return result

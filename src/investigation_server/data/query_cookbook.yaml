@@ -139,3 +139,38 @@
     | sort occurrences desc
     | limit 20
   notes: Good for spotting one dominant failure mode versus many unrelated errors.
+
+- id: nrql-last-n-logs
+  title: "NRQL: most recent log lines"
+  kind: nrql
+  query: |
+    SELECT timestamp, message FROM Log SINCE 1 hour ago LIMIT 10
+  notes: The basic sanity-check query — run this first to confirm nr_run_nrql_query is wired up before writing anything more specific.
+
+- id: nrql-trace-by-order-id
+  title: "NRQL: trace log lines for an order id"
+  kind: nrql
+  query: |
+    SELECT timestamp, message FROM Log WHERE order_id = '88213' SINCE 1 day ago LIMIT 200
+  notes: Assumes order_id was ingested as a parsed log attribute, not just embedded in the raw message text. If this returns nothing, fall back to `WHERE message LIKE '%88213%'`.
+
+- id: nrql-filter-by-correlation-id
+  title: "NRQL: filter by an arbitrary correlation/request id"
+  kind: nrql
+  query: |
+    SELECT timestamp, level, service, message FROM Log WHERE request_id = 'req-9f2c1a2b3c4d' SINCE 1 day ago LIMIT 200
+  notes: request_id should match the orders.request_id column for cross-source correlation.
+
+- id: nrql-error-rate-by-time
+  title: "NRQL: error rate over time by error code"
+  kind: nrql
+  query: |
+    SELECT count(*) FROM Log WHERE level = 'ERROR' FACET error_code TIMESERIES 5 minutes SINCE 3 hours ago
+  notes: Use to spot a spike and narrow the time window before tracing individual requests.
+
+- id: nrql-top-error-messages
+  title: "NRQL: most frequent error messages"
+  kind: nrql
+  query: |
+    SELECT count(*) FROM Log WHERE level = 'ERROR' FACET message SINCE 1 day ago LIMIT 20
+  notes: Good for spotting one dominant failure mode versus many unrelated errors.

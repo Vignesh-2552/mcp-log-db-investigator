@@ -12,7 +12,10 @@ from uuid import uuid4
 
 from investigation_server.config import Settings, get_settings
 from investigation_server.errors import ToolError
+from investigation_server.logging_config import get_logger
 from investigation_server.redaction import redact_arguments
+
+logger = get_logger("audit")
 
 F = TypeVar("F", bound=Callable[..., dict])
 
@@ -50,13 +53,18 @@ class AuditLogger:
         self._path = path
         self._lock = threading.Lock()
         self._path.parent.mkdir(parents=True, exist_ok=True)
+        logger.info("AuditLogger initialized targeting %s", self._path)
 
     def write(self, record: AuditRecord) -> None:
         line = record.to_json()
+        logger.debug("Writing audit record for tool '%s' (outcome=%s)", record.tool, record.outcome)
         with self._lock:
-            with open(self._path, "a", encoding="utf-8") as f:
-                f.write(line + "\n")
-                f.flush()
+            try:
+                with open(self._path, "a", encoding="utf-8") as f:
+                    f.write(line + "\n")
+                    f.flush()
+            except Exception as e:
+                logger.error("Failed to write audit record to %s: %s", self._path, e, exc_info=True)
 
 
 @lru_cache
