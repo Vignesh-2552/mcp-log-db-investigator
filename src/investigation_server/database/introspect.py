@@ -4,7 +4,7 @@ from sqlalchemy import inspect, text
 
 from investigation_server.cache import ttl_cache
 from investigation_server.config import Settings, get_settings
-from investigation_server.db.engine import get_engine
+from investigation_server.database.engine import get_engine
 from investigation_server.errors import GuardrailError
 from investigation_server.redaction import redact_rows
 
@@ -17,31 +17,17 @@ def _split_table(table: str) -> tuple[str, str]:
     return schema, name
 
 
-def _check_allowed(table: str, allowlist: frozenset[str]) -> str:
-    schema, name = _split_table(table)
-    qualified = f"{schema}.{name}".lower()
-    if qualified not in allowlist:
-        raise GuardrailError(
-            rule="table_not_allowed",
-            message=f"Table not allowed: {qualified}.",
-            allowed=sorted(allowlist),
-        )
-    return qualified
-
-
 @ttl_cache(maxsize=8, ttl_seconds=600)
-def _list_tables_cached(schema: str | None, allowlist: frozenset[str]) -> list[dict[str, Any]]:
+def _list_tables_cached(schema: str | None) -> list[dict[str, Any]]:
     settings = get_settings()
     engine = get_engine(settings)
     inspector = inspect(engine)
-    schemas = [schema] if schema else sorted({_split_table(t)[0] for t in allowlist})
+    schemas = [schema] if schema else sorted(inspector.get_schema_names())
     results: list[dict[str, Any]] = []
     with engine.connect() as conn:
         for sch in schemas:
             for name in inspector.get_table_names(schema=sch):
                 qualified = f"{sch}.{name}".lower()
-                if qualified not in allowlist:
-                    continue
                 estimate = conn.execute(
                     text(
                         "SELECT reltuples::bigint AS estimate FROM pg_class c "
@@ -68,14 +54,14 @@ def _list_tables_cached(schema: str | None, allowlist: frozenset[str]) -> list[d
     return results
 
 
-def list_tables(schema: str | None, allowlist: frozenset[str]) -> list[dict[str, Any]]:
-    """Cached ~10min per doc §4.1."""
-    return _list_tables_cached(schema, allowlist)
+def list_tables(schema: str | None) -> list[dict[str, Any]]:
+    """Cached ~10min."""
+    return _list_tables_cached(schema)
 
 
-def describe_table(table: str, allowlist: frozenset[str]) -> dict[str, Any]:
-    qualified = _check_allowed(table, allowlist)
-    schema, name = _split_table(qualified)
+def describe_table(table: str) -> dict[str, Any]:
+    schema, name = _split_table(table)
+    qualified = f"{schema}.{name}".lower()
     engine = get_engine()
     inspector = inspect(engine)
     columns = inspector.get_columns(name, schema=schema)
@@ -109,8 +95,9 @@ def describe_table(table: str, allowlist: frozenset[str]) -> dict[str, Any]:
     }
 
 
-def sample_rows(table: str, limit: int, allowlist: frozenset[str], settings: Settings | None = None) -> dict[str, Any]:
-    qualified = _check_allowed(table, allowlist)
+def sample_rows(table: str, limit: int, settings: Settings | None = None) -> dict[str, Any]:
+    schema, name = _split_table(table)
+    qualified = f"{schema}.{name}".lower()
     settings = settings or get_settings()
     clamped_limit = max(1, min(limit, settings.db_max_rows))
     engine = get_engine(settings)
@@ -122,7 +109,7 @@ def sample_rows(table: str, limit: int, allowlist: frozenset[str], settings: Set
     return {"table": qualified, "columns": columns, "rows": rows, "row_count": len(rows)}
 
 
-# design doc §4.1 db_search_by_identifier — the "find order X" convenience flow.
+# db_search_by_identifier — the "find order X" convenience flow.
 IDENTIFIER_SEARCH_MAP: dict[str, list[tuple[str, str]]] = {
     "order_id": [("public.orders", "id"), ("public.payments", "order_id")],
     "user_id": [("public.orders", "user_id"), ("public.users", "id")],
@@ -132,7 +119,7 @@ IDENTIFIER_SEARCH_MAP: dict[str, list[tuple[str, str]]] = {
 
 
 def search_by_identifier(
-    identifier: str, id_type: str, allowlist: frozenset[str], settings: Settings | None = None
+    identifier: str, id_type: str, settings: Settings | None = None
 ) -> dict[str, Any]:
     if id_type not in IDENTIFIER_SEARCH_MAP:
         raise GuardrailError(
@@ -145,8 +132,6 @@ def search_by_identifier(
     matches: list[dict[str, Any]] = []
     with engine.connect() as conn:
         for qualified, column in IDENTIFIER_SEARCH_MAP[id_type]:
-            if qualified not in allowlist:
-                continue
             result = conn.execute(
                 text(f"SELECT * FROM {qualified} WHERE {column} = :identifier LIMIT :limit"),
                 {"identifier": identifier, "limit": settings.db_max_rows},

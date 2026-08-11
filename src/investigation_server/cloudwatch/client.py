@@ -11,8 +11,7 @@ def _session(settings: Settings) -> boto3.Session:
 
 
 def get_logs_client(settings: Settings | None = None):
-    """Lazily creates a boto3 CloudWatch Logs client. Pointing at a real AWS
-    account is just AWS_PROFILE/AWS_REGION — no code change (doc §6.2)."""
+    """Lazily creates a boto3 CloudWatch Logs client."""
     global _logs_client
     if _logs_client is None:
         settings = settings or get_settings()

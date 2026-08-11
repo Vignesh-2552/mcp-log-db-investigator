@@ -4,11 +4,11 @@ from datetime import datetime, timedelta, timezone
 
 from botocore.exceptions import BotoCoreError, ClientError
 
-from investigation_server.app import mcp
+from investigation_server.server import mcp
 from investigation_server.audit import audited
 from investigation_server.config import get_settings
-from investigation_server.cw.client import get_logs_client, get_metrics_client
-from investigation_server.cw.guardrail import (
+from investigation_server.cloudwatch.client import get_logs_client, get_metrics_client
+from investigation_server.cloudwatch.guardrail import (
     check_bytes_scanned,
     clamp_window,
     poll_query_with_backoff,
@@ -153,7 +153,7 @@ def cw_run_insights_query(
 
         if bytes_scanned > settings.cw_max_bytes_scanned:
             client.stop_query(queryId=query_id)
-            check_bytes_scanned(bytes_scanned, settings.cw_max_bytes_scanned)  # raises CWGuardrailError
+            check_bytes_scanned(bytes_scanned, settings.cw_max_bytes_scanned)
 
     except ToolError as e:
         response = e.to_response()

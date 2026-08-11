@@ -1,0 +1,14 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Investigation Server (HTTP)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/investigation_server/server.py",
+      "console": "integratedTerminal",
+      "envFile": "${workspaceFolder}/.env",
+      "justMyCode": true
+    }
+  ]
+}

@@ -1,1 +1,1 @@
-from investigation_server.prompts import investigation_prompts  # noqa: F401
+from investigation_server.prompts import investigation  # noqa: F401

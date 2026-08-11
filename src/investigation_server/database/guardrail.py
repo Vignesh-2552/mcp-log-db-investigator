@@ -7,7 +7,7 @@ from investigation_server.errors import GuardrailError
 
 DIALECT = "postgres"
 
-# design doc §6.1 — reject any of these node types anywhere in the tree.
+# Reject any of these node types anywhere in the tree.
 BLOCKED_NODES = (
     exp.Insert,
     exp.Update,
@@ -22,7 +22,7 @@ BLOCKED_NODES = (
     exp.Command,
 )
 
-# design doc §6.1 — reject calls to these functions anywhere in the tree.
+# Reject calls to these functions anywhere in the tree.
 DANGEROUS_FUNCTIONS = {
     "pg_read_file",
     "pg_read_binary_file",
@@ -79,7 +79,7 @@ def clamp_and_inject_limit(
 
 
 def truncate_cell(value: object, max_bytes: int = 4096) -> object:
-    """Truncates str/bytes cells over max_bytes, per doc §6.1 result limits."""
+    """Truncates str/bytes cells over max_bytes."""
     if isinstance(value, str):
         data = value.encode("utf-8")
         if len(data) > max_bytes:
@@ -94,11 +94,10 @@ def truncate_cell(value: object, max_bytes: int = 4096) -> object:
 
 def validate_sql(
     sql: str,
-    allowlist: frozenset[str],
     max_rows: int,
     requested_limit: int | None = None,
 ) -> ValidatedQuery:
-    """The DB security boundary (design doc §6.1). Raises GuardrailError with
+    """The DB security boundary. Raises GuardrailError with
     a specific machine-readable `rule` on the first violation found, so the
     client model gets a self-correctable error rather than a bare denial.
     """
@@ -146,14 +145,7 @@ def validate_sql(
     for table in tree.find_all(exp.Table):
         if not table.db and table.name.lower() in cte_aliases:
             continue
-        name = _table_name(table)
-        if name not in allowlist:
-            raise GuardrailError(
-                rule="table_not_allowed",
-                message=f"Table not allowed: {name}.",
-                allowed=sorted(allowlist),
-            )
-        referenced_tables.append(name)
+        referenced_tables.append(_table_name(table))
 
     tree, limit = clamp_and_inject_limit(tree, max_rows, requested_limit)
 

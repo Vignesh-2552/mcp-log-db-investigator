@@ -10,10 +10,10 @@ _engine: Engine | None = None
 
 
 def _harden_session(engine: Engine, settings: Settings) -> None:
-    """Session hardening per design doc §6.1: read-only, statement timeout,
+    """Session hardening: read-only, statement timeout,
     idle-in-transaction timeout — applied on every new physical connection.
-    This is defense in depth; the `mcp_ro` DB role is the last line of
-    defence, not this application layer.
+    This is defense in depth; the DB role is the last line of defence,
+    not this application layer.
     """
 
     @event.listens_for(engine, "connect")

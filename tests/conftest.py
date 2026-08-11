@@ -7,9 +7,7 @@ from sqlalchemy.exc import OperationalError
 
 from investigation_server.audit import get_audit_logger
 from investigation_server.config import get_settings
-from investigation_server.db.engine import reset_engine
-
-INTEGRATION_DB_DSN = "postgresql+psycopg://mcp_ro:mcp_ro@localhost:55432/appdb"
+from investigation_server.database.engine import reset_engine
 
 
 @pytest.fixture
@@ -31,13 +29,15 @@ def settings_override(monkeypatch: pytest.MonkeyPatch):
 
 
 def _postgres_available() -> bool:
+    """Check whether the configured Postgres is reachable."""
     try:
-        engine = create_engine(INTEGRATION_DB_DSN, connect_args={"connect_timeout": 2})
+        settings = get_settings()
+        engine = create_engine(settings.db_dsn, connect_args={"connect_timeout": 2})
         with engine.connect():
             pass
         engine.dispose()
         return True
-    except OperationalError:
+    except (OperationalError, Exception):
         return False
 
 
@@ -50,7 +50,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     if os.environ.get("RUN_INTEGRATION_TESTS"):
         return
     if not _postgres_available():
-        skip_marker = pytest.mark.skip(reason="local docker-compose Postgres not reachable at localhost:55432")
+        skip_marker = pytest.mark.skip(reason="Configured Postgres not reachable")
         for item in items:
             if "integration" in item.keywords:
                 item.add_marker(skip_marker)

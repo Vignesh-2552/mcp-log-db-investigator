@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from investigation_server.errors import CWGuardrailError
 
-# design doc §8: poll with backoff, capped at the caller's max_wait_s.
+# Poll with backoff, capped at the caller's max_wait_s.
 _BACKOFF_SCHEDULE: tuple[float, ...] = (0.5, 1, 2, 4, 8, 8, 8, 8, 8, 8, 8, 8)
 
 _RUNNING_STATUSES = {"Running", "Scheduled"}
@@ -42,7 +42,7 @@ def clamp_window(
     max_hours: int,
 ) -> tuple[datetime, datetime]:
     """Parses/defaults the [start, end] window and enforces the hard cap
-    (doc §6.2: default 24h, hard cap 7 days)."""
+    (default 24h, hard cap 7 days)."""
     now = datetime.now(timezone.utc)
     end_dt = _parse_iso8601(end) if end else now
     start_dt = _parse_iso8601(start) if start else end_dt - timedelta(hours=default_hours)
@@ -76,13 +76,7 @@ def poll_query_with_backoff(
     sleep_fn: Callable[[float], None] = time.sleep,
 ) -> dict:
     """Calls poll_fn() repeatedly with backoff until a terminal status is
-    reported or max_wait_s elapses.
-
-    poll_fn must return a dict with a "status" key. If still running when
-    max_wait_s elapses, the last poll result is returned as-is (including
-    its query id) rather than raising, per doc §8 — the caller can poll
-    again later instead of the call failing outright.
-    """
+    reported or max_wait_s elapses."""
     elapsed = 0.0
     result = poll_fn()
     for delay in schedule:

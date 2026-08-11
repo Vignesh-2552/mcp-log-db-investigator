@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from investigation_server.cw.guardrail import (
+from investigation_server.cloudwatch.guardrail import (
     check_bytes_scanned,
     clamp_window,
     poll_query_with_backoff,

@@ -3,12 +3,12 @@ import time
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
-from investigation_server.app import mcp
+from investigation_server.server import mcp
 from investigation_server.audit import audited
 from investigation_server.config import get_settings
-from investigation_server.db import introspect
-from investigation_server.db.engine import get_engine
-from investigation_server.db.guardrail import build_explain_sql, truncate_cell, validate_sql
+from investigation_server.database import introspect
+from investigation_server.database.engine import get_engine
+from investigation_server.database.guardrail import build_explain_sql, truncate_cell, validate_sql
 from investigation_server.errors import ToolError
 from investigation_server.redaction import redact_rows
 
@@ -31,10 +31,9 @@ def _sqlalchemy_error_response(e: SQLAlchemyError) -> dict:
 @mcp.tool()
 @audited("db_list_tables")
 def db_list_tables(schema: str | None = None) -> dict:
-    """List allowlisted tables with row estimates and comments. Cached ~10 min."""
-    settings = get_settings()
+    """List tables with row estimates and comments. Cached ~10 min."""
     try:
-        tables = introspect.list_tables(schema, settings.db_table_allowlist_set)
+        tables = introspect.list_tables(schema)
     except ToolError as e:
         return e.to_response()
     return {"ok": True, "data": {"tables": tables}, "meta": {"row_count": len(tables)}}
@@ -45,9 +44,8 @@ def db_list_tables(schema: str | None = None) -> dict:
 def db_describe_table(table: str) -> dict:
     """Describe a table's columns, types, nullability, PK/FK, and indexes.
     The main grounding tool for generating a query against unfamiliar schema."""
-    settings = get_settings()
     try:
-        detail = introspect.describe_table(table, settings.db_table_allowlist_set)
+        detail = introspect.describe_table(table)
     except ToolError as e:
         return e.to_response()
     return {"ok": True, "data": detail, "meta": {}}
@@ -59,7 +57,7 @@ def db_sample_rows(table: str, limit: int = 5) -> dict:
     """Return sample rows from a table (PII-masked) to learn value formats, e.g. status enums."""
     settings = get_settings()
     try:
-        result = introspect.sample_rows(table, limit, settings.db_table_allowlist_set, settings)
+        result = introspect.sample_rows(table, limit, settings)
     except ToolError as e:
         return e.to_response()
     return {"ok": True, "data": result, "meta": {"row_count": result["row_count"]}}
@@ -71,7 +69,7 @@ def db_explain_query(sql: str) -> dict:
     """Run EXPLAIN (FORMAT JSON) on a validated SELECT. Run before expensive queries."""
     settings = get_settings()
     try:
-        validated = validate_sql(sql, settings.db_table_allowlist_set, settings.db_max_rows)
+        validated = validate_sql(sql, settings.db_max_rows)
         explain_sql = build_explain_sql(validated.sql)
         with get_engine(settings).connect() as conn:
             plan = conn.execute(text(explain_sql)).scalar()
@@ -89,7 +87,7 @@ def db_run_query(sql: str, limit: int = 200) -> dict:
     settings = get_settings()
     try:
         validated = validate_sql(
-            sql, settings.db_table_allowlist_set, settings.db_max_rows, requested_limit=limit
+            sql, settings.db_max_rows, requested_limit=limit
         )
         started = time.perf_counter()
         with get_engine(settings).connect() as conn:
@@ -123,10 +121,10 @@ def db_run_query(sql: str, limit: int = 200) -> dict:
 @mcp.tool()
 @audited("db_search_by_identifier")
 def db_search_by_identifier(identifier: str, id_type: str) -> dict:
-    """Search allowlisted tables for rows matching an identifier (order_id, user_id, payment_id, request_id)."""
+    """Search tables for rows matching an identifier (order_id, user_id, payment_id, request_id)."""
     settings = get_settings()
     try:
-        result = introspect.search_by_identifier(identifier, id_type, settings.db_table_allowlist_set, settings)
+        result = introspect.search_by_identifier(identifier, id_type, settings)
     except ToolError as e:
         return e.to_response()
     total_rows = sum(m["row_count"] for m in result["matches"])
