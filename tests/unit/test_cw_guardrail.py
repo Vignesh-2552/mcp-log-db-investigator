@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -37,14 +37,14 @@ def test_clamp_window_defaults_to_default_hours():
 
 
 def test_clamp_window_accepts_explicit_window_under_cap():
-    end = datetime.now(timezone.utc)
+    end = datetime.now(UTC)
     start = end - timedelta(hours=2)
     got_start, got_end = clamp_window(start.isoformat(), end.isoformat(), default_hours=24, max_hours=168)
     assert got_end - got_start == timedelta(hours=2)
 
 
 def test_clamp_window_rejects_window_over_hard_cap():
-    end = datetime.now(timezone.utc)
+    end = datetime.now(UTC)
     start = end - timedelta(days=10)
     with pytest.raises(CWGuardrailError) as exc:
         clamp_window(start.isoformat(), end.isoformat(), default_hours=24, max_hours=168)
@@ -52,7 +52,7 @@ def test_clamp_window_rejects_window_over_hard_cap():
 
 
 def test_clamp_window_rejects_start_after_end():
-    end = datetime.now(timezone.utc)
+    end = datetime.now(UTC)
     start = end + timedelta(hours=1)
     with pytest.raises(CWGuardrailError) as exc:
         clamp_window(start.isoformat(), end.isoformat(), default_hours=24, max_hours=168)

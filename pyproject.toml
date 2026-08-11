@@ -22,6 +22,7 @@ investigation-server = "investigation_server.server:main"
 dev = [
     "pytest>=9.0",
     "pytest-asyncio>=0.24",
+    "ruff>=0.14",
 ]
 
 [build-system]

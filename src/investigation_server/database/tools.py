@@ -8,7 +8,11 @@ from investigation_server.audit import audited
 from investigation_server.config import get_settings
 from investigation_server.database import introspect
 from investigation_server.database.engine import get_engine
-from investigation_server.database.guardrail import build_explain_sql, truncate_cell, validate_sql
+from investigation_server.database.guardrail import (
+    build_explain_sql,
+    truncate_cell,
+    validate_sql,
+)
 from investigation_server.errors import ToolError
 from investigation_server.redaction import redact_rows
 

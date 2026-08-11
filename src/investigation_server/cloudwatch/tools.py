@@ -1,12 +1,11 @@
 import json
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from botocore.exceptions import BotoCoreError, ClientError
 
 from investigation_server.app import mcp
 from investigation_server.audit import audited
-from investigation_server.config import get_settings
 from investigation_server.cloudwatch.client import get_logs_client, get_metrics_client
 from investigation_server.cloudwatch.guardrail import (
     check_bytes_scanned,
@@ -14,6 +13,7 @@ from investigation_server.cloudwatch.guardrail import (
     poll_query_with_backoff,
     validate_log_groups,
 )
+from investigation_server.config import get_settings
 from investigation_server.errors import ToolError
 from investigation_server.redaction import redact_log_event
 
@@ -70,7 +70,7 @@ def cw_describe_log_fields(log_group: str) -> dict:
     try:
         validate_log_groups([log_group], settings.cw_log_group_allowlist_set)
         client = get_logs_client(settings)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         response = client.filter_log_events(
             logGroupName=log_group,
             startTime=_epoch_millis(now - timedelta(hours=1)),
@@ -201,7 +201,7 @@ def cw_filter_events(log_group: str, pattern: str, minutes: int = 30) -> dict:
     try:
         validate_log_groups([log_group], settings.cw_log_group_allowlist_set)
         client = get_logs_client(settings)
-        end_dt = datetime.now(timezone.utc)
+        end_dt = datetime.now(UTC)
         start_dt, end_dt = clamp_window(
             (end_dt - timedelta(minutes=minutes)).isoformat(),
             end_dt.isoformat(),

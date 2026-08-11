@@ -4,7 +4,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from functools import lru_cache, wraps
 from pathlib import Path
 from typing import Any, Literal, TypeVar
@@ -78,7 +78,7 @@ def _record_call(tool_name: str, kwargs: dict, outcome: Outcome, error_rule: str
     rows_returned, bytes_scanned = _extract_meta(result)
     get_audit_logger().write(
         AuditRecord(
-            timestamp=datetime.now(timezone.utc).isoformat(),
+            timestamp=datetime.now(UTC).isoformat(),
             context_id=get_context_id(),
             tool=tool_name,
             arguments=redact_arguments(kwargs),

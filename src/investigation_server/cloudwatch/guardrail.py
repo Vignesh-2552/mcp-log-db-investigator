@@ -1,6 +1,6 @@
 import time
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from investigation_server.errors import CWGuardrailError
 
@@ -31,7 +31,7 @@ def _parse_iso8601(value: str) -> datetime:
             rule="invalid_timestamp", message=f"Could not parse timestamp: {value!r}.", detail=str(e)
         ) from e
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
     return dt
 
 
@@ -43,7 +43,7 @@ def clamp_window(
 ) -> tuple[datetime, datetime]:
     """Parses/defaults the [start, end] window and enforces the hard cap
     (default 24h, hard cap 7 days)."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     end_dt = _parse_iso8601(end) if end else now
     start_dt = _parse_iso8601(start) if start else end_dt - timedelta(hours=default_hours)
 
