@@ -5,10 +5,44 @@
       "name": "Investigation Server (HTTP)",
       "type": "debugpy",
       "request": "launch",
-      "program": "${workspaceFolder}/src/investigation_server/server.py",
+      "module": "investigation_server.server",
+      "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "envFile": "${workspaceFolder}/.env",
       "justMyCode": true
+    },
+    {
+      "name": "Pytest: current file",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "pytest",
+      "args": ["${file}", "-v", "-s"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "envFile": "${workspaceFolder}/.env",
+      "justMyCode": false
+    },
+    {
+      "name": "Pytest: unit tests",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "pytest",
+      "args": ["tests/unit", "-v"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "Pytest: integration tests",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "pytest",
+      "args": ["tests/integration", "-v", "-m", "integration"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "env": { "RUN_INTEGRATION_TESTS": "1" },
+      "envFile": "${workspaceFolder}/.env",
+      "justMyCode": false
     }
   ]
 }

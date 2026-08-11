@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=False)
 
     # Database
-    db_url: str = "postgresql+psycopg://localhost:5432/appdb"
+    db_url: str = "postgresql+asyncpg://localhost:5432/appdb"
     db_max_rows: int = 500
     db_statement_timeout_ms: int = 15000
     db_idle_txn_timeout_ms: int = 30000

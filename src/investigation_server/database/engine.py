@@ -1,22 +1,27 @@
-from collections.abc import Generator
-from contextlib import contextmanager
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 
-from sqlalchemy import create_engine, event
-from sqlalchemy.engine import Connection, Engine
+from sqlalchemy import event
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 
 from investigation_server.config import Settings, get_settings
 
-_engine: Engine | None = None
+_engine: AsyncEngine | None = None
 
 
-def _harden_session(engine: Engine, settings: Settings) -> None:
+def _harden_session(engine: AsyncEngine, settings: Settings) -> None:
     """Session hardening: read-only, statement timeout,
     idle-in-transaction timeout — applied on every new physical connection.
     This is defense in depth; the DB role is the last line of defence,
     not this application layer.
+
+    SQLAlchemy's asyncpg dialect exposes a DBAPI-style sync `cursor()` on
+    the pool "connect" event even though the underlying driver is async
+    (via greenlet trampolining), so this listener works the same way it
+    would for a sync driver.
     """
 
-    @event.listens_for(engine, "connect")
+    @event.listens_for(engine.sync_engine, "connect")
     def _on_connect(dbapi_conn, _connection_record) -> None:
         cursor = dbapi_conn.cursor()
         try:
@@ -29,26 +34,26 @@ def _harden_session(engine: Engine, settings: Settings) -> None:
             cursor.close()
 
 
-def get_engine(settings: Settings | None = None) -> Engine:
+def get_engine(settings: Settings | None = None) -> AsyncEngine:
     global _engine
     if _engine is None:
         settings = settings or get_settings()
-        _engine = create_engine(settings.db_dsn, pool_pre_ping=True)
+        _engine = create_async_engine(settings.db_dsn, pool_pre_ping=True)
         _harden_session(_engine, settings)
     return _engine
 
 
-def reset_engine() -> None:
+async def reset_engine() -> None:
     """Test helper: dispose of the cached engine so the next get_engine()
     call picks up fresh settings."""
     global _engine
     if _engine is not None:
-        _engine.dispose()
+        await _engine.dispose()
     _engine = None
 
 
-@contextmanager
-def get_connection(settings: Settings | None = None) -> Generator[Connection]:
+@asynccontextmanager
+async def get_connection(settings: Settings | None = None) -> AsyncGenerator[AsyncConnection]:
     engine = get_engine(settings)
-    with engine.connect() as conn:
+    async with engine.connect() as conn:
         yield conn

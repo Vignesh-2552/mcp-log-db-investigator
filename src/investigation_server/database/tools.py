@@ -3,7 +3,7 @@ import time
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
-from investigation_server.server import mcp
+from investigation_server.app import mcp
 from investigation_server.audit import audited
 from investigation_server.config import get_settings
 from investigation_server.database import introspect
@@ -30,10 +30,10 @@ def _sqlalchemy_error_response(e: SQLAlchemyError) -> dict:
 
 @mcp.tool()
 @audited("db_list_tables")
-def db_list_tables(schema: str | None = None) -> dict:
+async def db_list_tables(schema: str | None = None) -> dict:
     """List tables with row estimates and comments. Cached ~10 min."""
     try:
-        tables = introspect.list_tables(schema)
+        tables = await introspect.list_tables(schema)
     except ToolError as e:
         return e.to_response()
     return {"ok": True, "data": {"tables": tables}, "meta": {"row_count": len(tables)}}
@@ -41,11 +41,11 @@ def db_list_tables(schema: str | None = None) -> dict:
 
 @mcp.tool()
 @audited("db_describe_table")
-def db_describe_table(table: str) -> dict:
+async def db_describe_table(table: str) -> dict:
     """Describe a table's columns, types, nullability, PK/FK, and indexes.
     The main grounding tool for generating a query against unfamiliar schema."""
     try:
-        detail = introspect.describe_table(table)
+        detail = await introspect.describe_table(table)
     except ToolError as e:
         return e.to_response()
     return {"ok": True, "data": detail, "meta": {}}
@@ -53,11 +53,11 @@ def db_describe_table(table: str) -> dict:
 
 @mcp.tool()
 @audited("db_sample_rows")
-def db_sample_rows(table: str, limit: int = 5) -> dict:
+async def db_sample_rows(table: str, limit: int = 5) -> dict:
     """Return sample rows from a table (PII-masked) to learn value formats, e.g. status enums."""
     settings = get_settings()
     try:
-        result = introspect.sample_rows(table, limit, settings)
+        result = await introspect.sample_rows(table, limit, settings)
     except ToolError as e:
         return e.to_response()
     return {"ok": True, "data": result, "meta": {"row_count": result["row_count"]}}
@@ -65,14 +65,14 @@ def db_sample_rows(table: str, limit: int = 5) -> dict:
 
 @mcp.tool()
 @audited("db_explain_query")
-def db_explain_query(sql: str) -> dict:
+async def db_explain_query(sql: str) -> dict:
     """Run EXPLAIN (FORMAT JSON) on a validated SELECT. Run before expensive queries."""
     settings = get_settings()
     try:
         validated = validate_sql(sql, settings.db_max_rows)
         explain_sql = build_explain_sql(validated.sql)
-        with get_engine(settings).connect() as conn:
-            plan = conn.execute(text(explain_sql)).scalar()
+        async with get_engine(settings).connect() as conn:
+            plan = (await conn.execute(text(explain_sql))).scalar()
     except ToolError as e:
         return e.to_response()
     except SQLAlchemyError as e:
@@ -82,7 +82,7 @@ def db_explain_query(sql: str) -> dict:
 
 @mcp.tool()
 @audited("db_run_query")
-def db_run_query(sql: str, limit: int = 200) -> dict:
+async def db_run_query(sql: str, limit: int = 200) -> dict:
     """Run a read-only SELECT against the replica. Returns rows, columns, row count, and elapsed ms."""
     settings = get_settings()
     try:
@@ -90,8 +90,8 @@ def db_run_query(sql: str, limit: int = 200) -> dict:
             sql, settings.db_max_rows, requested_limit=limit
         )
         started = time.perf_counter()
-        with get_engine(settings).connect() as conn:
-            result = conn.execute(text(validated.sql))
+        async with get_engine(settings).connect() as conn:
+            result = await conn.execute(text(validated.sql))
             columns = list(result.keys())
             raw_rows = result.fetchall()
         elapsed_ms = (time.perf_counter() - started) * 1000
@@ -120,11 +120,11 @@ def db_run_query(sql: str, limit: int = 200) -> dict:
 
 @mcp.tool()
 @audited("db_search_by_identifier")
-def db_search_by_identifier(identifier: str, id_type: str) -> dict:
+async def db_search_by_identifier(identifier: str, id_type: str) -> dict:
     """Search tables for rows matching an identifier (order_id, user_id, payment_id, request_id)."""
     settings = get_settings()
     try:
-        result = introspect.search_by_identifier(identifier, id_type, settings)
+        result = await introspect.search_by_identifier(identifier, id_type, settings)
     except ToolError as e:
         return e.to_response()
     total_rows = sum(m["row_count"] for m in result["matches"])

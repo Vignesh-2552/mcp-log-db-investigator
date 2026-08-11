@@ -1,9 +1,5 @@
-from fastmcp import FastMCP
-
+from investigation_server.app import mcp
 from investigation_server.config import get_settings
-
-# FastMCP application instance
-mcp = FastMCP("investigation-server")
 
 # Imported for their registration side effects (@mcp.tool / @mcp.resource / @mcp.prompt).
 from investigation_server import cloudwatch as _cloudwatch  # noqa: F401

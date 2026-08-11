@@ -1,3 +1,4 @@
+import inspect
 import json
 import threading
 import time
@@ -72,19 +73,64 @@ def _extract_meta(result: Any) -> tuple[int | None, int | None]:
     return meta.get("row_count"), meta.get("bytes_scanned")
 
 
+def _record_call(tool_name: str, kwargs: dict, outcome: Outcome, error_rule: str | None, started: float, result: Any) -> None:
+    duration_ms = (time.perf_counter() - started) * 1000
+    rows_returned, bytes_scanned = _extract_meta(result)
+    get_audit_logger().write(
+        AuditRecord(
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            context_id=get_context_id(),
+            tool=tool_name,
+            arguments=redact_arguments(kwargs),
+            rows_returned=rows_returned,
+            bytes_scanned=bytes_scanned,
+            duration_ms=round(duration_ms, 2),
+            outcome=outcome,
+            error_rule=error_rule,
+        )
+    )
+
+
 def audited(tool_name: str) -> Callable[[F], F]:
     """Wraps a tool function to write exactly one AuditRecord per call.
 
     Placed directly under @mcp.tool() so it sees the raw arguments/return
     value before FastMCP's own serialization. Uses functools.wraps so
     inspect.signature (which FastMCP's schema builder relies on) still
-    resolves the original parameters via __wrapped__.
+    resolves the original parameters via __wrapped__. Works on both sync
+    (CloudWatch, boto3-backed) and async (database, asyncpg-backed) tools.
     """
 
     def decorator(func: F) -> F:
+        if inspect.iscoroutinefunction(func):
+
+            @wraps(func)
+            async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+                started = time.perf_counter()
+                outcome: Outcome = "success"
+                error_rule: str | None = None
+                result: Any = None
+                try:
+                    result = await func(*args, **kwargs)
+                    if isinstance(result, dict) and result.get("ok") is False:
+                        outcome = "denied"
+                        error_rule = (result.get("error") or {}).get("rule")
+                    return result
+                except ToolError as e:
+                    outcome = "denied"
+                    error_rule = e.rule
+                    raise
+                except Exception as e:
+                    outcome = "error"
+                    error_rule = type(e).__name__
+                    raise
+                finally:
+                    _record_call(tool_name, kwargs, outcome, error_rule, started, result)
+
+            return async_wrapper  # type: ignore[return-value]
+
         @wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
-            logger = get_audit_logger()
             started = time.perf_counter()
             outcome: Outcome = "success"
             error_rule: str | None = None
@@ -104,21 +150,7 @@ def audited(tool_name: str) -> Callable[[F], F]:
                 error_rule = type(e).__name__
                 raise
             finally:
-                duration_ms = (time.perf_counter() - started) * 1000
-                rows_returned, bytes_scanned = _extract_meta(result)
-                logger.write(
-                    AuditRecord(
-                        timestamp=datetime.now(timezone.utc).isoformat(),
-                        context_id=get_context_id(),
-                        tool=tool_name,
-                        arguments=redact_arguments(kwargs),
-                        rows_returned=rows_returned,
-                        bytes_scanned=bytes_scanned,
-                        duration_ms=round(duration_ms, 2),
-                        outcome=outcome,
-                        error_rule=error_rule,
-                    )
-                )
+                _record_call(tool_name, kwargs, outcome, error_rule, started, result)
 
         return wrapper  # type: ignore[return-value]
 

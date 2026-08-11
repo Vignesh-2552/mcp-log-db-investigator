@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from botocore.exceptions import BotoCoreError, ClientError
 
-from investigation_server.server import mcp
+from investigation_server.app import mcp
 from investigation_server.audit import audited
 from investigation_server.config import get_settings
 from investigation_server.cloudwatch.client import get_logs_client, get_metrics_client

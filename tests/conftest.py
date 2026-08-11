@@ -1,9 +1,9 @@
+import asyncio
 import os
-from collections.abc import Iterator
 
 import pytest
-from sqlalchemy import create_engine
 from sqlalchemy.exc import OperationalError
+from sqlalchemy.ext.asyncio import create_async_engine
 
 from investigation_server.audit import get_audit_logger
 from investigation_server.config import get_settings
@@ -11,34 +11,43 @@ from investigation_server.database.engine import reset_engine
 
 
 @pytest.fixture
-def settings_override(monkeypatch: pytest.MonkeyPatch):
+async def settings_override(monkeypatch: pytest.MonkeyPatch):
     """Monkeypatch env vars and clear the Settings/engine caches so each
     test gets a fresh, isolated configuration."""
 
-    def _apply(**env: str) -> None:
+    async def _apply(**env: str) -> None:
         for key, value in env.items():
             monkeypatch.setenv(key.upper(), value)
         get_settings.cache_clear()
         get_audit_logger.cache_clear()
-        reset_engine()
+        await reset_engine()
 
     yield _apply
     get_settings.cache_clear()
     get_audit_logger.cache_clear()
-    reset_engine()
+    await reset_engine()
+
+
+async def _check_postgres() -> bool:
+    """Check whether the configured Postgres is reachable. Only treats
+    genuine connectivity failures as "unreachable" (-> skip integration
+    tests) — a broken driver/config (e.g. missing asyncpg) is a real bug
+    and is allowed to raise so it fails loudly instead of being silently
+    skipped."""
+    settings = get_settings()
+    engine = create_async_engine(settings.db_dsn, connect_args={"timeout": 2})
+    try:
+        async with engine.connect():
+            pass
+        return True
+    except OperationalError:
+        return False
+    finally:
+        await engine.dispose()
 
 
 def _postgres_available() -> bool:
-    """Check whether the configured Postgres is reachable."""
-    try:
-        settings = get_settings()
-        engine = create_engine(settings.db_dsn, connect_args={"connect_timeout": 2})
-        with engine.connect():
-            pass
-        engine.dispose()
-        return True
-    except (OperationalError, Exception):
-        return False
+    return asyncio.run(_check_postgres())
 
 
 @pytest.fixture(scope="session")
