@@ -35,7 +35,7 @@ def _epoch_millis(dt: datetime) -> int:
 
 
 def _aws_error_response(e: Exception) -> dict:
-    logger.error("AWS CloudWatch API error: %s", e, exc_info=True)
+    logger.error("AWS CloudWatch API error: %s", e)
     return ToolError(rule="aws_error", message="AWS CloudWatch call failed.", detail=str(e)).to_response()
 
 

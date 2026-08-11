@@ -32,7 +32,7 @@ def _sqlalchemy_error_response(e: SQLAlchemyError) -> dict:
                 "Use db_explain_query to inspect the plan before retrying."
             ),
         ).to_response()
-    logger.error("Database query execution failed: %s", detail, exc_info=True)
+    logger.error("Database query execution failed: %s", detail)
     return ToolError(rule="query_execution_error", message="Query failed to execute.", detail=detail).to_response()
 
 

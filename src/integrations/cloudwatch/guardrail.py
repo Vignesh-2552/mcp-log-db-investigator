@@ -31,7 +31,7 @@ def validate_log_groups(requested: list[str], allowlist: frozenset[str]) -> list
 
 def _parse_iso8601(value: str) -> datetime:
     try:
-        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(value)
     except ValueError as e:
         raise CWGuardrailError(
             rule="invalid_timestamp", message=f"Could not parse timestamp: {value!r}.", detail=str(e)
