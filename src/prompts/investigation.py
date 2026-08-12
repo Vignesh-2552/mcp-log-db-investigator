@@ -11,10 +11,16 @@ fan out and merge results yourself:
 3. Pull `logs://groups` to see which log groups exist, then call
    `cw_describe_log_fields` on each relevant one before writing a Logs
    Insights query, so your `filter`/`fields` clauses match real field names.
+   If New Relic is also in play, call `nr_describe_log_fields` first too —
+   New Relic Log attributes depend entirely on the ingestion pipeline (e.g.
+   `trace.id`/`span.id` from logs-in-context vs. a custom `request_id`), so
+   never guess a WHERE clause; use the `correlation_id_candidates` it
+   returns to find the right identifier to join on.
 4. Call `cw_run_insights_query` (or `cw_filter_events` for a simple grep)
-   against every log group that could plausibly be involved — do not assume
-   a single service. If a query returns `status: "Running"`, poll it again
-   with the same `query_id` rather than giving up.
+   against every log group that could plausibly be involved, and/or
+   `nr_run_nrql_query` for New Relic — do not assume a single service or a
+   single log source. If a CloudWatch query returns `status: "Running"`,
+   poll it again with the same `query_id` rather than giving up.
 5. Merge the DB rows and log events yourself, sorted by timestamp, to build
    a single incident timeline. Note where identifiers match up
    (order_id/user_id/request_id) and where they don't.

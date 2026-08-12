@@ -62,6 +62,6 @@ def redact_rows(rows: list[dict[str, Any]], settings: Settings | None = None) ->
 
 
 def redact_log_event(message: str, settings: Settings | None = None) -> str:
-    if not enabled(settings):
+    if not enabled(settings) or not isinstance(message, str):
         return message
     return redact_text(message)

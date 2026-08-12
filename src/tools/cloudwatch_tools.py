@@ -80,30 +80,31 @@ def cw_describe_log_fields(log_group: str) -> dict:
             startTime=_epoch_millis(now - timedelta(hours=1)),
             limit=_DESCRIBE_FIELDS_SAMPLE_SIZE,
         )
+
+        events = response.get("events", [])
+        field_counts: dict[str, int] = defaultdict(int)
+        parsed = 0
+        for event in events:
+            try:
+                obj = json.loads(event.get("message", ""))
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if isinstance(obj, dict):
+                parsed += 1
+                for key in obj:
+                    field_counts[key] += 1
+
+        fields = [
+            {"field": k, "frequency": v} for k, v in sorted(field_counts.items(), key=lambda kv: -kv[1])
+        ]
+        note = None
+        if events and parsed == 0:
+            note = "Sampled events do not appear to be JSON-structured; field discovery is limited."
     except ToolError as e:
         return e.to_response()
     except (BotoCoreError, ClientError) as e:
         return _aws_error_response(e)
 
-    events = response.get("events", [])
-    field_counts: dict[str, int] = defaultdict(int)
-    parsed = 0
-    for event in events:
-        try:
-            obj = json.loads(event.get("message", ""))
-        except (json.JSONDecodeError, TypeError):
-            continue
-        if isinstance(obj, dict):
-            parsed += 1
-            for key in obj:
-                field_counts[key] += 1
-
-    fields = [
-        {"field": k, "frequency": v} for k, v in sorted(field_counts.items(), key=lambda kv: -kv[1])
-    ]
-    note = None
-    if events and parsed == 0:
-        note = "Sampled events do not appear to be JSON-structured; field discovery is limited."
     return {
         "ok": True,
         "data": {
@@ -160,7 +161,8 @@ def cw_run_insights_query(
         bytes_scanned = poll_result.get("bytes_scanned", 0)
 
         if bytes_scanned > settings.cw_max_bytes_scanned:
-            client.stop_query(queryId=query_id)
+            if poll_result.get("status") in ("Running", "Scheduled"):
+                client.stop_query(queryId=query_id)
             check_bytes_scanned(bytes_scanned, settings.cw_max_bytes_scanned)
 
     except ToolError as e:

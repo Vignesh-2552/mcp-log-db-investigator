@@ -21,13 +21,7 @@ class Settings(BaseSettings):
     db_schema_cache_ttl_s: int = 600
 
     # AWS / CloudWatch
-    aws_region: str = "ap-south-1"
     aws_profile: str | None = None
-    aws_access_key_id: str | None = None
-    aws_secret_access_key: SecretStr | None = None
-    # CLOUDWATCH_* takes priority over the AWS_* fields above when set —
-    # lets CloudWatch use a dedicated key/region separate from other AWS
-    # usage (e.g. S3) without them stepping on each other in .env.
     cloudwatch_access_key_id: str | None = None
     cloudwatch_secret_access_key: SecretStr | None = None
     cloudwatch_region: str | None = None
@@ -55,15 +49,14 @@ class Settings(BaseSettings):
 
     @property
     def cloudwatch_effective_region(self) -> str:
-        return self.cloudwatch_region or self.aws_region
+        return self.cloudwatch_region
 
     @property
     def cloudwatch_effective_access_key_id(self) -> str | None:
-        return self.cloudwatch_access_key_id or self.aws_access_key_id
-
+        return self.cloudwatch_access_key_id 
     @property
     def cloudwatch_effective_secret_access_key(self) -> SecretStr | None:
-        return self.cloudwatch_secret_access_key or self.aws_secret_access_key
+        return self.cloudwatch_secret_access_key 
 
     @property
     def cw_log_group_allowlist_set(self) -> frozenset[str]:

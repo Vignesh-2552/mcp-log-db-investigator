@@ -2,6 +2,7 @@ import asyncio
 from typing import Any
 
 from sqlalchemy import inspect, text
+from sqlalchemy.exc import SQLAlchemyError
 
 from core.cache import ttl_cache
 from core.config import Settings, get_settings
@@ -226,20 +227,31 @@ async def search_by_identifier(
 
     engine = get_engine(settings)
 
-    async def _search_one(schema: str, table: str, column: str) -> dict[str, Any] | None:
+    async def _search_one(schema: str, table: str, column: str) -> dict[str, Any]:
         qualified = f"{schema}.{table}"
-        async with engine.connect() as conn:
-            result = await conn.execute(
-                text(f'SELECT * FROM "{schema}"."{table}" WHERE "{column}" = :identifier LIMIT :limit'),
-                {"identifier": identifier, "limit": settings.db_max_rows},
-            )
-            columns = list(result.keys())
-            rows = [dict(zip(columns, row)) for row in result.fetchall()]
+        try:
+            async with engine.connect() as conn:
+                result = await conn.execute(
+                    text(f'SELECT * FROM "{schema}"."{table}" WHERE "{column}" = :identifier LIMIT :limit'),
+                    {"identifier": identifier, "limit": settings.db_max_rows},
+                )
+                columns = list(result.keys())
+                rows = [dict(zip(columns, row)) for row in result.fetchall()]
+        except SQLAlchemyError as e:
+            # The identifier's literal shape doesn't fit this column's SQL
+            # type (e.g. a non-UUID string against a uuid PK) — since
+            # id_type is resolved dynamically across every plausibly-matching
+            # table/column, this is a normal "not a match" outcome for one
+            # target, not a reason to fail the whole fan-out.
+            detail = str(getattr(e, "orig", None) or e)
+            logger.debug("Skipping %s.%s for identifier search: %s", qualified, column, detail)
+            return {"table": qualified, "column": column, "skipped": True, "reason": detail}
         if not rows:
-            return None
+            return {"table": qualified, "column": column, "skipped": False, "row_count": 0}
         return {
             "table": qualified,
             "column": column,
+            "skipped": False,
             "rows": redact_rows(rows, settings),
             "row_count": len(rows),
         }
@@ -249,11 +261,17 @@ async def search_by_identifier(
     # scale linearly with per-query network latency (25 tables x ~1s+ each
     # over a real network is a genuinely bad wait).
     results = await asyncio.gather(*(_search_one(s, t, c) for s, t, c in targets))
-    matches = [m for m in results if m is not None]
+    matches = [r for r in results if not r["skipped"] and r["row_count"] > 0]
+    skipped = [
+        {"table": r["table"], "column": r["column"], "reason": r["reason"]}
+        for r in results
+        if r["skipped"]
+    ]
     return {
         "identifier": identifier,
         "id_type": id_type,
         "searched_tables": [f"{s}.{t}" for s, t, _ in targets],
         "truncated": truncated,
         "matches": matches,
+        "skipped": skipped,
     }

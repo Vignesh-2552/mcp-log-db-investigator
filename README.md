@@ -59,6 +59,8 @@ CloudWatch tools (`cw_*`) call real `boto3`/AWS APIs; set `AWS_PROFILE` /
 | `cw_run_insights_query` | `StartQuery` → poll → `GetQueryResults`, cost-capped |
 | `cw_filter_events` | Simple pattern grep over recent events |
 | `cw_get_metric_stats` | CloudWatch metric datapoints |
+| `nr_describe_log_fields` | `keyset()` of a New Relic event type (default `Log`), flags likely trace/correlation id attributes — run before writing NRQL |
+| `nr_run_nrql_query` | Validated, read-only NRQL execution against New Relic (Log/Metric/event data) |
 
 Resources: `schema://db/tables`, `schema://db/table/{name}`, `logs://groups`,
 `docs://query-cookbook`. Prompts: `investigate_incident`, `trace_user_journey`,
@@ -66,12 +68,13 @@ Resources: `schema://db/tables`, `schema://db/table/{name}`, `logs://groups`,
 
 ## Security model
 
-Every `db_*`/`cw_*` call goes through a guardrail layer *before* any network
-I/O: SQL is parsed with `sqlglot` and rejected unless it's a single
+Every `db_*`/`cw_*`/`nr_*` call goes through a guardrail layer *before* any
+network I/O: SQL is parsed with `sqlglot` and rejected unless it's a single
 `SELECT`/`WITH...SELECT` with no dangerous functions; CloudWatch calls are
 checked against a log-group allowlist, a time-window cap, and a bytes-scanned
-cost ceiling. Results and any log messages are redacted before returning. See
-design doc §6 for the full model.
+cost ceiling; NRQL is restricted to a single `SELECT` with no write-ish
+keywords and a clamped `LIMIT`. Results and any log messages are redacted
+before returning. See design doc §6 for the full model.
 
 ## Testing
 

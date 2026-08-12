@@ -140,6 +140,13 @@
     | limit 20
   notes: Good for spotting one dominant failure mode versus many unrelated errors.
 
+- id: nrql-discover-fields
+  title: "NRQL: discover real Log attributes before writing a WHERE clause"
+  kind: nrql
+  query: |
+    SELECT keyset() FROM Log SINCE 1 hour ago
+  notes: Don't write this by hand — call the `nr_describe_log_fields` tool, which runs this and highlights `correlation_id_candidates` (trace.id, span.id, request_id, order_id, etc.). New Relic Log attributes are whatever the ingestion pipeline set, so guessing field names is the #1 cause of NRQL that silently returns zero rows.
+
 - id: nrql-last-n-logs
   title: "NRQL: most recent log lines"
   kind: nrql
@@ -152,14 +159,14 @@
   kind: nrql
   query: |
     SELECT timestamp, message FROM Log WHERE order_id = '88213' SINCE 1 day ago LIMIT 200
-  notes: Assumes order_id was ingested as a parsed log attribute, not just embedded in the raw message text. If this returns nothing, fall back to `WHERE message LIKE '%88213%'`.
+  notes: Run `nr_describe_log_fields` first to confirm `order_id` (or whatever the real attribute is named — check `correlation_id_candidates`) actually exists as a parsed log attribute, not just embedded in the raw message text. If it isn't in the keyset, fall back to `WHERE message LIKE '%88213%'`.
 
 - id: nrql-filter-by-correlation-id
   title: "NRQL: filter by an arbitrary correlation/request id"
   kind: nrql
   query: |
     SELECT timestamp, level, service, message FROM Log WHERE request_id = 'req-9f2c1a2b3c4d' SINCE 1 day ago LIMIT 200
-  notes: request_id should match the orders.request_id column for cross-source correlation.
+  notes: request_id should match the orders.request_id column for cross-source correlation. If distributed tracing (logs-in-context) is enabled the real attribute is often `trace.id` or `span.id` instead — call `nr_describe_log_fields` and use its `correlation_id_candidates` rather than assuming `request_id`.
 
 - id: nrql-error-rate-by-time
   title: "NRQL: error rate over time by error code"

@@ -43,6 +43,8 @@ async def db_list_tables(schema: str | None = None) -> dict:
         tables = await introspect.list_tables(schema)
     except ToolError as e:
         return e.to_response()
+    except SQLAlchemyError as e:
+        return _sqlalchemy_error_response(e)
     return {"ok": True, "data": {"tables": tables}, "meta": {"row_count": len(tables)}}
 
 
@@ -54,6 +56,8 @@ async def db_describe_table(table: str) -> dict:
         detail = await introspect.describe_table(table)
     except ToolError as e:
         return e.to_response()
+    except SQLAlchemyError as e:
+        return _sqlalchemy_error_response(e)
     return {"ok": True, "data": detail, "meta": {}}
 
 
@@ -65,6 +69,8 @@ async def db_sample_rows(table: str, limit: int = 5) -> dict:
         result = await introspect.sample_rows(table, limit, settings)
     except ToolError as e:
         return e.to_response()
+    except SQLAlchemyError as e:
+        return _sqlalchemy_error_response(e)
     return {"ok": True, "data": result, "meta": {"row_count": result["row_count"]}}
 
 
@@ -134,5 +140,7 @@ async def db_search_by_identifier(identifier: str, id_type: str) -> dict:
         result = await introspect.search_by_identifier(identifier, id_type, settings)
     except ToolError as e:
         return e.to_response()
+    except SQLAlchemyError as e:
+        return _sqlalchemy_error_response(e)
     total_rows = sum(m["row_count"] for m in result["matches"])
     return {"ok": True, "data": result, "meta": {"row_count": total_rows}}
