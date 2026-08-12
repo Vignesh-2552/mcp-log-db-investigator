@@ -12,6 +12,13 @@ _PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("PHONE", re.compile(r"\b(?:\+?\d{1,3}[\s-]?)?\d{10}\b")),
 ]
 
+# UUIDs are hyphen-delimited digit runs, so CARD/AADHAAR can partially match
+# inside one (a hyphen is a non-word char, so \b fires right after it). Protect
+# UUID-shaped substrings with placeholders before running the pattern list.
+_UUID_RE = re.compile(
+    r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
+)
+
 PII_COLUMN_NAMES = {
     "email",
     "email_address",
@@ -38,9 +45,21 @@ def enabled(settings: Settings | None = None) -> bool:
 
 
 def redact_text(value: str) -> str:
+    uuids = _UUID_RE.findall(value)
+    if not uuids:
+        for label, pattern in _PATTERNS:
+            value = pattern.sub(f"[REDACTED_{label}]", value)
+        return value
+
+    protected = value
+    placeholders = [f"\x00UUID{i}\x00" for i in range(len(uuids))]
+    for placeholder, original in zip(placeholders, uuids):
+        protected = protected.replace(original, placeholder, 1)
     for label, pattern in _PATTERNS:
-        value = pattern.sub(f"[REDACTED_{label}]", value)
-    return value
+        protected = pattern.sub(f"[REDACTED_{label}]", protected)
+    for placeholder, original in zip(placeholders, uuids):
+        protected = protected.replace(placeholder, original, 1)
+    return protected
 
 
 def redact_row(row: dict[str, Any], settings: Settings | None = None) -> dict[str, Any]:

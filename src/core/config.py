@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     db_idle_txn_timeout_ms: int = 30000
     db_max_cell_bytes: int = 4096
     db_schema_cache_ttl_s: int = 600
+    db_store_identifier_columns: str = "domain,domain_name,hostname,host,store_name,slug,subdomain"
+    db_historical_schema_prefixes: str = "migration"
 
     # AWS / CloudWatch
     aws_profile: str | None = None
@@ -30,6 +32,8 @@ class Settings(BaseSettings):
     cw_default_window_hours: int = 24
     cw_max_bytes_scanned: int = 5_000_000_000
     cw_poll_max_wait_s: int = 60
+    cw_describe_fields_sample_size: int = 50
+    cw_describe_fields_error_boost_size: int = 20
 
     # New Relic (NerdGraph / NRQL)
     new_relic_api_key: SecretStr | None = None
@@ -70,6 +74,18 @@ class Settings(BaseSettings):
     @property
     def db_dsn(self) -> str:
         return self.db_url
+
+    @property
+    def db_store_identifier_columns_set(self) -> frozenset[str]:
+        return frozenset(
+            item.strip() for item in self.db_store_identifier_columns.split(",") if item.strip()
+        )
+
+    @property
+    def db_historical_schema_prefixes_set(self) -> frozenset[str]:
+        return frozenset(
+            item.strip() for item in self.db_historical_schema_prefixes.split(",") if item.strip()
+        )
 
     @property
     def new_relic_graphql_url(self) -> str:

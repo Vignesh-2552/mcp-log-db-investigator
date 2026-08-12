@@ -30,6 +30,17 @@
     WHERE status = 'FAILED' AND created_at BETWEEN :start AND :end
     ORDER BY created_at DESC LIMIT 100;
 
+- id: resolve-store-by-domain
+  title: Resolve a store name/domain to its store_id
+  kind: sql
+  query: |
+    -- Don't hand-write this — call the `db_resolve_store` tool, which searches
+    -- catalog-discovered domain/hostname/store_name-like columns with ILIKE
+    -- and reports `ambiguous: true` when a name/domain matches more than one
+    -- distinct store_id, instead of silently picking one.
+    -- db_resolve_store(name_or_domain="olallawines.com")
+  notes: Run this before any query that needs a store_id — always check the `ambiguous` field in the response before trusting a single `store_id`.
+
 - id: order-payment-join
   title: Order joined with its payment attempts
   kind: sql
@@ -100,7 +111,18 @@
     | filter order_id = "88213"
     | sort @timestamp asc
     | limit 200
-  notes: Replace the literal order id. Run once per relevant service log group.
+  notes: Prefer calling `cw_get_trace_events(log_group=..., field="order_id", value="88213", start=..., end=...)` instead of hand-writing this — it builds and escapes the same query and applies the standard row-shape (redaction, @ptr stripping). Keep this raw form only for multi-field filters the tool doesn't cover.
+
+- id: cw-describe-then-trace
+  title: "CloudWatch: discover the correlation field, then pull its trace"
+  kind: logs_insights
+  query: |
+    -- 1. cw_describe_log_fields(log_group=...) -> inspect each shape's
+    --    `correlation_id_candidates` (e.g. "trace_id", "order_id", "request_id")
+    -- 2. cw_get_trace_events(log_group=..., field="<candidate>", value="<id>",
+    --    start=..., end=...) -> every matching line across the log group,
+    --    sorted chronologically, in one call
+  notes: Replaces manually re-running several ad hoc Insights queries to reconstruct a request's path through a service.
 
 - id: logs-error-rate-by-bin
   title: "Logs Insights: error rate over time by error code"
@@ -128,7 +150,7 @@
     | filter request_id = "req-9f2c1a2b3c4d"
     | sort @timestamp asc
     | limit 200
-  notes: request_id should match the orders.request_id column for cross-source correlation.
+  notes: request_id should match the orders.request_id column for cross-source correlation. Prefer `cw_get_trace_events(log_group=..., field="request_id", value="req-9f2c1a2b3c4d", start=..., end=...)` over hand-writing this.
 
 - id: logs-top-error-messages
   title: "Logs Insights: most frequent error messages"

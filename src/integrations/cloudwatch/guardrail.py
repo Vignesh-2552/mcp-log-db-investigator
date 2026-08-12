@@ -1,3 +1,4 @@
+import re
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -64,6 +65,37 @@ def clamp_window(
             detail=f"Narrow the time window to at most {max_hours} hours.",
         )
     return start_dt, end_dt
+
+
+_TRACE_FIELD_RE = re.compile(r"^[A-Za-z_@][A-Za-z0-9_.]*$")
+
+
+def validate_trace_field(field: str) -> str:
+    if not _TRACE_FIELD_RE.match(field):
+        logger.warning("CloudWatch guardrail error (invalid_field_name): %r rejected", field)
+        raise CWGuardrailError(
+            rule="invalid_field_name",
+            message="field must look like a Logs Insights field name (letters, digits, "
+            "underscore, dot; optionally starting with @).",
+            detail=f"Got: {field!r}",
+        )
+    return field
+
+
+def build_trace_filter_value(value: str) -> str:
+    """Escapes `value` for safe embedding inside `filter <field> = "<value>"`.
+    Logs Insights has no parameterized-query API and no statement stacking via
+    `;`; the exploitable surface is breaking out of the string literal via an
+    unescaped `"` or a newline that starts a new pipeline stage, so backslash-
+    escape `\\`/`"` and reject embedded newlines outright."""
+    if "\n" in value or "\r" in value:
+        logger.warning("CloudWatch guardrail error (invalid_trace_value): newline in value")
+        raise CWGuardrailError(
+            rule="invalid_trace_value",
+            message="value must not contain newlines.",
+            detail=f"Got: {value!r}",
+        )
+    return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
 def check_bytes_scanned(bytes_scanned: int, ceiling: int) -> None:

@@ -4,10 +4,12 @@ import pytest
 
 from core.errors import CWGuardrailError
 from integrations.cloudwatch.guardrail import (
+    build_trace_filter_value,
     check_bytes_scanned,
     clamp_window,
     poll_query_with_backoff,
     validate_log_groups,
+    validate_trace_field,
 )
 
 ALLOWLIST = frozenset({"/aws/ecs/checkout-svc", "/aws/ecs/payment-svc"})
@@ -112,3 +114,26 @@ def test_poll_query_with_backoff_respects_max_wait_s_budget():
     poll_query_with_backoff(poll_fn, max_wait_s=3, sleep_fn=sleeps.append)
 
     assert sum(sleeps) <= 3
+
+
+def test_validate_trace_field_accepts_identifier_like_names():
+    assert validate_trace_field("trace_id") == "trace_id"
+    assert validate_trace_field("message.user.storeId") == "message.user.storeId"
+    assert validate_trace_field("@timestamp") == "@timestamp"
+
+
+def test_validate_trace_field_rejects_non_identifier():
+    with pytest.raises(CWGuardrailError) as exc:
+        validate_trace_field('trace_id" or 1=1 --')
+    assert exc.value.rule == "invalid_field_name"
+
+
+def test_build_trace_filter_value_escapes_quotes_and_backslashes():
+    assert build_trace_filter_value('has "quote') == 'has \\"quote'
+    assert build_trace_filter_value("back\\slash") == "back\\\\slash"
+
+
+def test_build_trace_filter_value_rejects_newlines():
+    with pytest.raises(CWGuardrailError) as exc:
+        build_trace_filter_value("line1\nline2")
+    assert exc.value.rule == "invalid_trace_value"

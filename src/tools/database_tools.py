@@ -135,7 +135,12 @@ async def db_search_by_identifier(identifier: str, id_type: str) -> dict:
     string (e.g. "order_id", "customer_id", "transaction_id") — resolved
     dynamically against the DB's own catalog, not a fixed list. Searches every
     table with a matching column name, plus the entity's own table (e.g.
-    "order_id" also checks the "orders" table's primary key)."""
+    "order_id" also checks the "orders" table's primary key). Each searched
+    table/match is tagged `source_type: "live"|"historical"` (schemas prefixed
+    per DB_HISTORICAL_SCHEMA_PREFIXES, e.g. "migration"), and a top-level
+    `data_freshness_note` warns when a 'no matches' result only reflects
+    historical/migration-snapshot tables — check both before concluding an
+    identifier doesn't exist anywhere."""
     settings = get_settings()
     try:
         result = await introspect.search_by_identifier(identifier, id_type, settings)
@@ -145,3 +150,23 @@ async def db_search_by_identifier(identifier: str, id_type: str) -> dict:
         return _sqlalchemy_error_response(e)
     total_rows = sum(m["row_count"] for m in result["matches"])
     return {"ok": True, "data": result, "meta": {"row_count": total_rows}}
+
+
+@mcp.tool()
+async def db_resolve_store(name_or_domain: str) -> dict:
+    """Resolve a store name or domain (e.g. "olallawines.com") to its store_id.
+    Searches catalog-discovered identifier-like columns (domain, hostname,
+    store_name, slug, subdomain — configurable via DB_STORE_IDENTIFIER_COLUMNS)
+    with case-insensitive partial (ILIKE) matching; no hardcoded "stores"
+    table. When multiple distinct store_ids match, the response is
+    `ambiguous: true` with every match listed in `candidates` rather than
+    silently picking one — always check `ambiguous` before trusting a single
+    `store_id`."""
+    settings = get_settings()
+    try:
+        result = await introspect.resolve_store(name_or_domain, settings)
+    except ToolError as e:
+        return e.to_response()
+    except SQLAlchemyError as e:
+        return _sqlalchemy_error_response(e)
+    return {"ok": True, "data": result, "meta": {"candidate_count": len(result["candidates"])}}
