@@ -14,11 +14,11 @@ execute them safely. See `docs/design.md` for the full design rationale (§3.1 e
 query generation is client-side, not server-side).
 
 **`docs/design.md` is a draft design doc, not a changelog** — §4.3 describes composite tools
-`investigation_start` and `trace_request` that are **not implemented**; don't assume they
-exist. Cross-source correlation (DB + CloudWatch + New Relic) is currently manual, driven by
-the `investigate_incident`/`trace_user_journey`/`slow_endpoint_rca` prompts in
-`src/prompts/investigation.py`, which walk the model through fanning out to each source and
-merging results itself.
+`investigation_start` and `trace_request`, and §4.4 describes MCP prompts
+(`investigate_incident`/`trace_user_journey`/`slow_endpoint_rca`); **none of these are
+implemented**; don't assume they exist. Cross-source correlation (DB + CloudWatch + New
+Relic) is currently entirely manual — the client model fans out to each source's tools and
+merges results itself, with no server-side guidance beyond the query cookbook.
 
 ## Commands
 
@@ -43,15 +43,21 @@ the client calls) → `integrations/<source>/guardrail.py` (validate/reject, pur
 no I/O) → `integrations/<source>/client.py` or `engine.py` (actual network/DB I/O). Guardrail
 functions never touch the network; tool functions never build a query without passing it
 through the guardrail first. When adding a tool, follow this shape — see `newrelic_tools.py`
-for the smallest complete example (guardrail → client → redact → structured response).
+for the smallest complete example (guardrail → client → redact → structured response). The
+one deliberate exception is inventory tools (`db_list_tables`, `cw_list_log_groups`,
+`nr_list_event_types`): they send a hardcoded, parameter-free (or window-clamped) query
+straight to the client, bypassing the query guardrail, since there's no user-supplied query
+text to validate — `nr_list_event_types` in particular sends `SHOW EVENT TYPES`, which isn't
+a `SELECT` and would otherwise be rejected by `validate_nrql`.
 
 **Three independent data sources, one shared pattern**: `database` (SQLAlchemy/asyncpg +
 `sqlglot` AST validation), `cloudwatch` (boto3 Logs Insights + a log-group allowlist + a
 bytes-scanned cost ceiling), `newrelic` (NerdGraph GraphQL + a regex-based NRQL guardrail,
-since NRQL has no AST parser like sqlglot). Each source has a `*_describe_*`/`*_list_*`
-grounding tool that must be called before writing a query against unfamiliar fields:
-`db_describe_table`, `cw_describe_log_fields`, `nr_describe_log_fields` (uses NRQL's
-`keyset()` and separately flags likely trace/correlation-id attributes). Skipping the
+since NRQL has no AST parser like sqlglot). Each source has a `*_list_*` inventory tool
+(`db_list_tables`, `cw_list_log_groups`, `nr_list_event_types`) and a `*_describe_*`
+grounding tool (`db_describe_table`, `cw_describe_log_fields`, `nr_describe_log_fields`, which
+uses NRQL's `keyset()` and separately flags likely trace/correlation-id attributes) that
+should be called before writing a query against unfamiliar fields. Skipping the
 grounding step is the main cause of queries that silently return zero rows because a field
 name was guessed wrong.
 
@@ -60,11 +66,11 @@ imported by every tool/resource/prompt module as `from core.app import mcp`. Thi
 specifically so `server.py` (which is also the entry point run via `-m`/`investigation-server`)
 never gets circularly imported — see the comment in `core/app.py` if touching this.
 
-**Registration is import-side-effect based**: `src/tools/__init__.py`,
-`src/resources/__init__.py`, `src/prompts/__init__.py` each import their submodules purely
-for the `@mcp.tool()`/`@mcp.resource()`/`@mcp.prompt()` decorators to run. `server.py` imports
-all three `__init__` modules before calling `mcp.run()`. A new tool/resource/prompt file must
-be added to the relevant `__init__.py` import list or it will never register.
+**Registration is import-side-effect based**: `src/tools/__init__.py` and
+`src/resources/__init__.py` each import their submodules purely for the
+`@mcp.tool()`/`@mcp.resource()` decorators to run. `server.py` imports both `__init__`
+modules before calling `mcp.run()`. A new tool/resource file must be added to the relevant
+`__init__.py` import list or it will never register.
 
 **Errors are structured and self-correcting by design**: every guardrail raises a `ToolError`
 subclass (`GuardrailError`, `CWGuardrailError`, `NewRelicGuardrailError` in `core/errors.py`)

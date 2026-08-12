@@ -13,6 +13,37 @@ def _settings_env(monkeypatch: pytest.MonkeyPatch):
     get_settings.cache_clear()
 
 
+async def test_list_event_types_returns_sorted_unique_names(monkeypatch: pytest.MonkeyPatch):
+    async def fake_run_nrql(query, settings):
+        assert query.startswith("SHOW EVENT TYPES")
+        return {
+            "results": [{"eventType": "Transaction"}, {"eventType": "Log"}, {"eventType": "Log"}],
+            "metadata": {},
+        }
+
+    monkeypatch.setattr(newrelic_tools, "run_nrql", fake_run_nrql)
+
+    result = await newrelic_tools.nr_list_event_types()
+
+    assert result["ok"] is True
+    assert result["data"]["event_types"] == ["Log", "Transaction"]
+    assert result["data"]["note"] is None
+    assert result["meta"]["event_type_count"] == 2
+
+
+async def test_list_event_types_notes_empty_result(monkeypatch: pytest.MonkeyPatch):
+    async def fake_run_nrql(query, settings):
+        return {"results": [], "metadata": {}}
+
+    monkeypatch.setattr(newrelic_tools, "run_nrql", fake_run_nrql)
+
+    result = await newrelic_tools.nr_list_event_types(hours=6)
+
+    assert result["ok"] is True
+    assert result["data"]["event_types"] == []
+    assert result["data"]["note"] is not None
+
+
 async def test_describe_log_fields_rejects_invalid_event_type():
     result = await newrelic_tools.nr_describe_log_fields(event_type="Log; DROP")
     assert result["ok"] is False

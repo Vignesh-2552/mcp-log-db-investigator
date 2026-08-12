@@ -1,4 +1,3 @@
-import prompts as _prompts  # noqa: F401
 import resources as _resources  # noqa: F401
 import tools as _tools  # noqa: F401
 from core.app import mcp

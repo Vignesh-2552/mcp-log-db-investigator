@@ -61,12 +61,12 @@ CloudWatch tools (`cw_*`) call real `boto3`/AWS APIs; set `CLOUDWATCH_REGION`
 | `cw_run_insights_query` | `StartQuery` → poll → `GetQueryResults`, cost-capped |
 | `cw_filter_events` | Simple pattern grep over recent events |
 | `cw_get_metric_stats` | CloudWatch metric datapoints |
+| `nr_list_event_types` | `SHOW EVENT TYPES` — enumerates event types with data (`Log`, `Transaction`, `Span`, `Metric`, custom types) — run before `nr_describe_log_fields` if the event type is unknown |
 | `nr_describe_log_fields` | `keyset()` of a New Relic event type (default `Log`), flags likely trace/correlation id attributes — run before writing NRQL |
 | `nr_run_nrql_query` | Validated, read-only NRQL execution against New Relic (Log/Metric/event data) |
 
 Resources: `schema://db/tables`, `schema://db/table/{name}`, `logs://groups`,
-`docs://query-cookbook`. Prompts: `investigate_incident`, `trace_user_journey`,
-`slow_endpoint_rca`.
+`docs://query-cookbook`.
 
 ## Security model
 
