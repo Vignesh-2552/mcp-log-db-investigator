@@ -12,6 +12,7 @@ from integrations.database import introspect
 from integrations.database.engine import get_engine
 from integrations.database.guardrail import (
     build_explain_sql,
+    sqlalchemy_error_detail,
     truncate_cell,
     validate_sql,
 )
@@ -20,7 +21,7 @@ logger = get_logger("database.tools")
 
 
 def _sqlalchemy_error_response(e: SQLAlchemyError) -> dict:
-    detail = str(e.orig) if getattr(e, "orig", None) else str(e)
+    detail = sqlalchemy_error_detail(e)
     lowered = detail.lower()
     if "statement timeout" in lowered or "canceling statement" in lowered:
         logger.warning("Database query statement timeout: %s", detail)

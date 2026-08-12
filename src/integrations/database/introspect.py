@@ -2,7 +2,7 @@ import asyncio
 from typing import Any
 
 from sqlalchemy import inspect, text
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import DataError
 
 from core.cache import ttl_cache
 from core.config import Settings, get_settings
@@ -10,6 +10,7 @@ from core.errors import GuardrailError
 from core.logging_config import get_logger
 from core.redaction import redact_rows
 from integrations.database.engine import get_engine
+from integrations.database.guardrail import sqlalchemy_error_detail
 
 logger = get_logger("database.introspect")
 
@@ -237,13 +238,17 @@ async def search_by_identifier(
                 )
                 columns = list(result.keys())
                 rows = [dict(zip(columns, row)) for row in result.fetchall()]
-        except SQLAlchemyError as e:
+        except DataError as e:
             # The identifier's literal shape doesn't fit this column's SQL
             # type (e.g. a non-UUID string against a uuid PK) — since
             # id_type is resolved dynamically across every plausibly-matching
             # table/column, this is a normal "not a match" outcome for one
-            # target, not a reason to fail the whole fan-out.
-            detail = str(getattr(e, "orig", None) or e)
+            # target, not a reason to fail the whole fan-out. Only DataError
+            # is caught here (not SQLAlchemyError broadly) so a real DB
+            # failure on this target — a timeout, a dropped connection —
+            # still propagates and surfaces as a proper error instead of
+            # silently reading as "no match".
+            detail = sqlalchemy_error_detail(e)
             logger.debug("Skipping %s.%s for identifier search: %s", qualified, column, detail)
             return {"table": qualified, "column": column, "skipped": True, "reason": detail}
         if not rows:

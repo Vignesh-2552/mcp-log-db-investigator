@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 import sqlglot
+from sqlalchemy.exc import SQLAlchemyError
 from sqlglot import exp
 
 from core.errors import GuardrailError
@@ -9,6 +10,14 @@ from core.logging_config import get_logger
 logger = get_logger("database.guardrail")
 
 DIALECT = "postgres"
+
+
+def sqlalchemy_error_detail(e: SQLAlchemyError) -> str:
+    """Best-effort extraction of the underlying driver error message —
+    `.orig` is the raw DBAPI exception (e.g. asyncpg's), which is usually
+    more specific than SQLAlchemy's own wrapper message."""
+    orig = getattr(e, "orig", None)
+    return str(orig) if orig is not None else str(e)
 
 # Reject any of these node types anywhere in the tree.
 BLOCKED_NODES = (

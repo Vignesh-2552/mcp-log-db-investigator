@@ -18,10 +18,11 @@ def _auth_mode(settings: Settings) -> str:
 
 
 def _session(settings: Settings) -> boto3.Session:
-    """CLOUDWATCH_ACCESS_KEY_ID/CLOUDWATCH_SECRET_ACCESS_KEY (or the AWS_*
-    fallbacks) take priority over AWS_PROFILE when set in .env; falling back
-    further to boto3's default credential chain (env vars it recognizes
-    natively, instance role, etc.) if neither is configured."""
+    """CLOUDWATCH_ACCESS_KEY_ID/CLOUDWATCH_SECRET_ACCESS_KEY take priority
+    over AWS_PROFILE when set in .env; falling back further to boto3's
+    default credential chain (env vars it recognizes natively, instance
+    role, etc.) if neither is configured. Region always comes from
+    CLOUDWATCH_REGION — there is no AWS_REGION fallback."""
     access_key = settings.cloudwatch_effective_access_key_id
     secret_key = settings.cloudwatch_effective_secret_access_key
     if access_key and secret_key:

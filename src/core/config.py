@@ -48,15 +48,16 @@ class Settings(BaseSettings):
     log_format: str = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 
     @property
-    def cloudwatch_effective_region(self) -> str:
+    def cloudwatch_effective_region(self) -> str | None:
         return self.cloudwatch_region
 
     @property
     def cloudwatch_effective_access_key_id(self) -> str | None:
-        return self.cloudwatch_access_key_id 
+        return self.cloudwatch_access_key_id
+
     @property
     def cloudwatch_effective_secret_access_key(self) -> SecretStr | None:
-        return self.cloudwatch_secret_access_key 
+        return self.cloudwatch_secret_access_key
 
     @property
     def cw_log_group_allowlist_set(self) -> frozenset[str]:
