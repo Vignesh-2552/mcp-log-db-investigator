@@ -42,9 +42,18 @@ uv run investigation-server                      # start the MCP server (streama
 the client calls) → `integrations/<source>/guardrail.py` (validate/reject, pure functions,
 no I/O) → `integrations/<source>/client.py` or `engine.py` (actual network/DB I/O). Guardrail
 functions never touch the network; tool functions never build a query without passing it
-through the guardrail first. When adding a tool, follow this shape — see `newrelic_tools.py`
-for the smallest complete example (guardrail → client → redact → structured response). The
-one deliberate exception is inventory tools (`db_list_tables`, `cw_list_log_groups`,
+through the guardrail first. Each source under `tools/` is its own package
+(`tools/database/`, `tools/cloudwatch/`, `tools/newrelic/`) with **one file per tool**, named
+after the tool itself (e.g. `tools/database/db_resolve_store.py`), plus a package-local
+`utils.py` holding whatever that source's tool files share (error-response builders, client
+getters, regexes, multi-tool helpers like CloudWatch's `run_insights_query`). Tool files pull
+shared code via `from tools.<source> import utils` and call `utils.thing(...)` — always
+through the module, never `from tools.<source>.utils import thing` — so tests that
+`monkeypatch.setattr(utils, "thing", ...)` patch every tool file at once instead of just the
+one that happened to import it first. When adding a tool, follow this shape — see
+`tools/newrelic/nr_list_event_types.py` for the smallest complete example (guardrail → client
+→ redact → structured response). The one deliberate exception is inventory tools
+(`db_list_tables`, `cw_list_log_groups`,
 `nr_list_event_types`): they send a hardcoded, parameter-free (or window-clamped) query
 straight to the client, bypassing the query guardrail, since there's no user-supplied query
 text to validate — `nr_list_event_types` in particular sends `SHOW EVENT TYPES`, which isn't
@@ -66,11 +75,14 @@ imported by every tool/resource/prompt module as `from core.app import mcp`. Thi
 specifically so `server.py` (which is also the entry point run via `-m`/`investigation-server`)
 never gets circularly imported — see the comment in `core/app.py` if touching this.
 
-**Registration is import-side-effect based**: `src/tools/__init__.py` and
-`src/resources/__init__.py` each import their submodules purely for the
-`@mcp.tool()`/`@mcp.resource()` decorators to run. `server.py` imports both `__init__`
-modules before calling `mcp.run()`. A new tool/resource file must be added to the relevant
-`__init__.py` import list or it will never register.
+**Registration is import-side-effect based**: `src/tools/__init__.py` imports the three
+source packages (`cloudwatch`, `database`, `newrelic`); each package's own `__init__.py` in
+turn imports every tool file in it purely for the `@mcp.tool()` decorator to run, and
+re-exports the tool function so it can also be imported as `from tools.<source> import
+<tool_name>`. `src/resources/__init__.py` does the same for `@mcp.resource()`. `server.py`
+imports both top-level `__init__` modules before calling `mcp.run()`. A new tool file must be
+added to its source package's `__init__.py` import list (and, transitively, the source
+package must already be listed in `src/tools/__init__.py`) or it will never register.
 
 **Errors are structured and self-correcting by design**: every guardrail raises a `ToolError`
 subclass (`GuardrailError`, `CWGuardrailError`, `NewRelicGuardrailError` in `core/errors.py`)

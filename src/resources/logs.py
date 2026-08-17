@@ -1,7 +1,7 @@
 import json
 
 from core.app import mcp
-from tools.cloudwatch_tools import cw_list_log_groups
+from tools.cloudwatch import cw_list_log_groups
 
 
 @mcp.resource("logs://groups")

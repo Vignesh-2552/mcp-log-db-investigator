@@ -165,7 +165,7 @@ WHERE i.indisprimary
 
 def _entity_name_candidates(id_type: str) -> list[str]:
     """order_id -> ['order', 'orders']; category -> ['categories', 'category']."""
-    entity = id_type[:-3] if id_type.endswith("_id") else id_type
+    entity = id_type.removesuffix("_id")
     if not entity:
         return []
     candidates = {entity, f"{entity}s"}

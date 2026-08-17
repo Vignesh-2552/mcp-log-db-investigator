@@ -11,7 +11,7 @@ async def db_env(settings_override, tmp_path):
 
 
 async def test_db_list_tables_returns_tables(db_env):
-    from tools.database_tools import db_list_tables
+    from tools.database import db_list_tables
 
     result = await db_list_tables(schema="private")
     assert result["ok"] is True
@@ -19,7 +19,7 @@ async def test_db_list_tables_returns_tables(db_env):
 
 
 async def test_db_describe_table_returns_columns(db_env):
-    from tools.database_tools import db_describe_table
+    from tools.database import db_describe_table
 
     result = await db_describe_table("private.orders")
     assert result["ok"] is True
@@ -29,7 +29,7 @@ async def test_db_describe_table_returns_columns(db_env):
 
 
 async def test_db_run_query_returns_a_real_order(db_env):
-    from tools.database_tools import db_run_query
+    from tools.database import db_run_query
 
     result = await db_run_query(
         "SELECT id, order_number, customer_id, status FROM private.orders ORDER BY created_at DESC LIMIT 1"
@@ -40,7 +40,7 @@ async def test_db_run_query_returns_a_real_order(db_env):
 
 
 async def test_db_run_query_rejects_write_end_to_end(db_env):
-    from tools.database_tools import db_run_query
+    from tools.database import db_run_query
 
     result = await db_run_query("DELETE FROM private.orders WHERE id = '00000000-0000-0000-0000-000000000000'")
     assert result["ok"] is False
@@ -48,7 +48,7 @@ async def test_db_run_query_rejects_write_end_to_end(db_env):
 
 
 async def test_db_search_by_identifier_finds_order_and_payment(db_env):
-    from tools.database_tools import db_run_query, db_search_by_identifier
+    from tools.database import db_run_query, db_search_by_identifier
 
     seed = await db_run_query(
         "SELECT order_id FROM private.order_payment ORDER BY created_at DESC LIMIT 1"
@@ -63,7 +63,7 @@ async def test_db_search_by_identifier_finds_order_and_payment(db_env):
 
 
 async def test_db_sample_rows_masks_pii(db_env):
-    from tools.database_tools import db_sample_rows
+    from tools.database import db_sample_rows
 
     result = await db_sample_rows("private.customer", limit=5)
     assert result["ok"] is True

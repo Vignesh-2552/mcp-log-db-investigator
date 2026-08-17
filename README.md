@@ -48,6 +48,9 @@ CloudWatch tools (`cw_*`) call real `boto3`/AWS APIs; set `CLOUDWATCH_REGION`
 
 ## Tool catalog
 
+For a junior-friendly reference with inputs, output structures, examples, and
+tool update guidance, see [`docs/tool-reference.md`](docs/tool-reference.md).
+
 | Tool | Purpose |
 |---|---|
 | `db_list_tables` | Tables + row estimates + comments (cached ~10 min) |

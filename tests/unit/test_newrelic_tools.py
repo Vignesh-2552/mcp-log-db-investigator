@@ -1,7 +1,9 @@
 import pytest
 
 from core.config import get_settings
-from tools import newrelic_tools
+from tools.newrelic import utils as nr_utils
+from tools.newrelic.nr_describe_log_fields import nr_describe_log_fields
+from tools.newrelic.nr_list_event_types import nr_list_event_types
 
 
 @pytest.fixture(autouse=True)
@@ -21,9 +23,9 @@ async def test_list_event_types_returns_sorted_unique_names(monkeypatch: pytest.
             "metadata": {},
         }
 
-    monkeypatch.setattr(newrelic_tools, "run_nrql", fake_run_nrql)
+    monkeypatch.setattr(nr_utils, "run_nrql", fake_run_nrql)
 
-    result = await newrelic_tools.nr_list_event_types()
+    result = await nr_list_event_types()
 
     assert result["ok"] is True
     assert result["data"]["event_types"] == ["Log", "Transaction"]
@@ -35,9 +37,9 @@ async def test_list_event_types_notes_empty_result(monkeypatch: pytest.MonkeyPat
     async def fake_run_nrql(query, settings):
         return {"results": [], "metadata": {}}
 
-    monkeypatch.setattr(newrelic_tools, "run_nrql", fake_run_nrql)
+    monkeypatch.setattr(nr_utils, "run_nrql", fake_run_nrql)
 
-    result = await newrelic_tools.nr_list_event_types(hours=6)
+    result = await nr_list_event_types(hours=6)
 
     assert result["ok"] is True
     assert result["data"]["event_types"] == []
@@ -45,7 +47,7 @@ async def test_list_event_types_notes_empty_result(monkeypatch: pytest.MonkeyPat
 
 
 async def test_describe_log_fields_rejects_invalid_event_type():
-    result = await newrelic_tools.nr_describe_log_fields(event_type="Log; DROP")
+    result = await nr_describe_log_fields(event_type="Log; DROP")
     assert result["ok"] is False
     assert result["error"]["rule"] == "invalid_event_type"
 
@@ -61,9 +63,9 @@ async def test_describe_log_fields_returns_keyset_and_correlation_candidates(
             "metadata": {},
         }
 
-    monkeypatch.setattr(newrelic_tools, "run_nrql", fake_run_nrql)
+    monkeypatch.setattr(nr_utils, "run_nrql", fake_run_nrql)
 
-    result = await newrelic_tools.nr_describe_log_fields()
+    result = await nr_describe_log_fields()
 
     assert result["ok"] is True
     assert result["data"]["fields"] == ["level", "message", "service", "span.id", "trace.id"]
@@ -75,9 +77,9 @@ async def test_describe_log_fields_notes_empty_result(monkeypatch: pytest.Monkey
     async def fake_run_nrql(query, settings):
         return {"results": [], "metadata": {}}
 
-    monkeypatch.setattr(newrelic_tools, "run_nrql", fake_run_nrql)
+    monkeypatch.setattr(nr_utils, "run_nrql", fake_run_nrql)
 
-    result = await newrelic_tools.nr_describe_log_fields(event_type="Transaction", hours=6)
+    result = await nr_describe_log_fields(event_type="Transaction", hours=6)
 
     assert result["ok"] is True
     assert result["data"]["fields"] == []

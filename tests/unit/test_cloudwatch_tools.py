@@ -4,7 +4,10 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from core.config import get_settings
-from tools import cloudwatch_tools
+from tools.cloudwatch import utils as cw_utils
+from tools.cloudwatch.cw_describe_log_fields import cw_describe_log_fields
+from tools.cloudwatch.cw_get_trace_events import cw_get_trace_events
+from tools.cloudwatch.cw_run_insights_query import cw_run_insights_query
 
 LOG_GROUP = "/aws/ecs/test-svc"
 
@@ -43,9 +46,9 @@ def test_describe_log_fields_clusters_by_shape(monkeypatch: pytest.MonkeyPatch):
     ] + [_event("r-err", {"message": {"user": {"id": "u1"}}})]
     error_events = [_event("e1", {"message": {"user": {"id": "u2"}, "errors": [{"path": "x"}]}})]
     fake_client = _FakeLogsClient(random_events, error_events)
-    monkeypatch.setattr(cloudwatch_tools, "get_logs_client", lambda settings: fake_client)
+    monkeypatch.setattr(cw_utils, "get_logs_client", lambda settings: fake_client)
 
-    result = cloudwatch_tools.cw_describe_log_fields(LOG_GROUP)
+    result = cw_describe_log_fields(LOG_GROUP)
 
     assert result["ok"] is True
     shapes = result["data"]["shapes"]
@@ -70,18 +73,18 @@ def test_describe_log_fields_clusters_by_shape(monkeypatch: pytest.MonkeyPatch):
 def test_describe_log_fields_flags_correlation_id_candidates(monkeypatch: pytest.MonkeyPatch):
     events = [_event("r1", {"trace_id": "abc", "level": "info"})]
     fake_client = _FakeLogsClient(events)
-    monkeypatch.setattr(cloudwatch_tools, "get_logs_client", lambda settings: fake_client)
+    monkeypatch.setattr(cw_utils, "get_logs_client", lambda settings: fake_client)
 
-    result = cloudwatch_tools.cw_describe_log_fields(LOG_GROUP)
+    result = cw_describe_log_fields(LOG_GROUP)
 
     assert result["data"]["shapes"][0]["correlation_id_candidates"] == ["trace_id"]
 
 
 def test_describe_log_fields_empty_sample_note(monkeypatch: pytest.MonkeyPatch):
     fake_client = _FakeLogsClient([{"eventId": "r1", "message": "not json"}])
-    monkeypatch.setattr(cloudwatch_tools, "get_logs_client", lambda settings: fake_client)
+    monkeypatch.setattr(cw_utils, "get_logs_client", lambda settings: fake_client)
 
-    result = cloudwatch_tools.cw_describe_log_fields(LOG_GROUP)
+    result = cw_describe_log_fields(LOG_GROUP)
 
     assert result["data"]["shapes"] == []
     assert result["data"]["note"] is not None
@@ -118,10 +121,10 @@ def _window():
 def test_run_insights_query_strips_ptr_by_default(monkeypatch: pytest.MonkeyPatch):
     results = [[{"field": "@ptr", "value": "opaque"}, {"field": "@timestamp", "value": "t1"}]]
     fake_client = _FakeInsightsClient(results, bytes_scanned=100)
-    monkeypatch.setattr(cloudwatch_tools, "get_logs_client", lambda settings: fake_client)
+    monkeypatch.setattr(cw_utils, "get_logs_client", lambda settings: fake_client)
     start, end = _window()
 
-    result = cloudwatch_tools.cw_run_insights_query([LOG_GROUP], "fields @timestamp", start, end)
+    result = cw_run_insights_query([LOG_GROUP], "fields @timestamp", start, end)
 
     assert result["ok"] is True
     assert result["data"]["rows"] == [{"@timestamp": "t1"}]
@@ -131,10 +134,10 @@ def test_run_insights_query_strips_ptr_by_default(monkeypatch: pytest.MonkeyPatc
 def test_run_insights_query_keeps_ptr_when_requested(monkeypatch: pytest.MonkeyPatch):
     results = [[{"field": "@ptr", "value": "opaque"}, {"field": "@timestamp", "value": "t1"}]]
     fake_client = _FakeInsightsClient(results, bytes_scanned=100)
-    monkeypatch.setattr(cloudwatch_tools, "get_logs_client", lambda settings: fake_client)
+    monkeypatch.setattr(cw_utils, "get_logs_client", lambda settings: fake_client)
     start, end = _window()
 
-    result = cloudwatch_tools.cw_run_insights_query(
+    result = cw_run_insights_query(
         [LOG_GROUP], "fields @timestamp", start, end, include_ptr=True
     )
 
@@ -146,10 +149,10 @@ def test_run_insights_query_ceiling_exceeded_suggests_window(monkeypatch: pytest
     monkeypatch.setenv("CW_MAX_BYTES_SCANNED", "5000000000")
     get_settings.cache_clear()
     fake_client = _FakeInsightsClient(results=[], bytes_scanned=10_000_000_000)
-    monkeypatch.setattr(cloudwatch_tools, "get_logs_client", lambda settings: fake_client)
+    monkeypatch.setattr(cw_utils, "get_logs_client", lambda settings: fake_client)
     start, end = _window()
 
-    result = cloudwatch_tools.cw_run_insights_query([LOG_GROUP], "fields @timestamp", start, end)
+    result = cw_run_insights_query([LOG_GROUP], "fields @timestamp", start, end)
 
     assert result["ok"] is False
     assert result["error"]["rule"] == "bytes_scanned_ceiling_exceeded"
@@ -167,26 +170,26 @@ def test_run_insights_query_ceiling_exceeded_suggests_window(monkeypatch: pytest
 def test_suggest_window_seconds_formula(bytes_scanned, ceiling, window_seconds, expected_max):
     start = datetime.now(UTC)
     end = start + timedelta(seconds=window_seconds)
-    suggestion = cloudwatch_tools._suggest_window_seconds(bytes_scanned, ceiling, start, end)
+    suggestion = cw_utils.suggest_window_seconds(bytes_scanned, ceiling, start, end)
     assert suggestion == expected_max
 
 
 def test_suggest_window_seconds_returns_none_for_degenerate_input():
     now = datetime.now(UTC)
-    assert cloudwatch_tools._suggest_window_seconds(0, 5000, now, now + timedelta(hours=1)) is None
-    assert cloudwatch_tools._suggest_window_seconds(100, 5000, now, now) is None
+    assert cw_utils.suggest_window_seconds(0, 5000, now, now + timedelta(hours=1)) is None
+    assert cw_utils.suggest_window_seconds(100, 5000, now, now) is None
 
 
 def test_get_trace_events_rejects_invalid_field():
     start, end = _window()
-    result = cloudwatch_tools.cw_get_trace_events(LOG_GROUP, "bad field!", "x", start, end)
+    result = cw_get_trace_events(LOG_GROUP, "bad field!", "x", start, end)
     assert result["ok"] is False
     assert result["error"]["rule"] == "invalid_field_name"
 
 
 def test_get_trace_events_rejects_newline_in_value():
     start, end = _window()
-    result = cloudwatch_tools.cw_get_trace_events(LOG_GROUP, "trace_id", "line1\nline2", start, end)
+    result = cw_get_trace_events(LOG_GROUP, "trace_id", "line1\nline2", start, end)
     assert result["ok"] is False
     assert result["error"]["rule"] == "invalid_trace_value"
 
@@ -194,10 +197,10 @@ def test_get_trace_events_rejects_newline_in_value():
 def test_get_trace_events_builds_and_executes_query(monkeypatch: pytest.MonkeyPatch):
     results = [[{"field": "@timestamp", "value": "t1"}]]
     fake_client = _FakeInsightsClient(results, bytes_scanned=10)
-    monkeypatch.setattr(cloudwatch_tools, "get_logs_client", lambda settings: fake_client)
+    monkeypatch.setattr(cw_utils, "get_logs_client", lambda settings: fake_client)
     start, end = _window()
 
-    result = cloudwatch_tools.cw_get_trace_events(LOG_GROUP, "trace_id", 'has "quote', start, end)
+    result = cw_get_trace_events(LOG_GROUP, "trace_id", 'has "quote', start, end)
 
     assert result["ok"] is True
     assert result["data"]["field"] == "trace_id"
