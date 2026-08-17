@@ -38,6 +38,7 @@ CloudWatch tools (`cw_*`) call real `boto3`/AWS APIs; set `CLOUDWATCH_REGION`
 {
   "mcpServers": {
     "investigation": {
+      "type":"http",
       "url": "http://localhost:8000/mcp"
     }
   }

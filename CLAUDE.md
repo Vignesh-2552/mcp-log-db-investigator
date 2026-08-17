@@ -10,15 +10,15 @@ against AWS CloudWatch, and log/event access against New Relic (NRQL). It's mean
 driven by a client model (Claude Desktop, Cursor) that writes queries in natural-language
 conversation — the server's job is to supply enough grounding context (schema, field
 discovery, a query cookbook) that the model generates correct queries, and to validate +
-execute them safely. See `docs/design.md` for the full design rationale (§3.1 explains why
-query generation is client-side, not server-side).
+execute them safely. See `docs/design.md` for the as-built design (§3.1 explains why
+query generation is client-side, not server-side; §4.5 lists items from the original draft
+that are still not implemented).
 
-**`docs/design.md` is a draft design doc, not a changelog** — §4.3 describes composite tools
-`investigation_start` and `trace_request`, and §4.4 describes MCP prompts
-(`investigate_incident`/`trace_user_journey`/`slow_endpoint_rca`); **none of these are
-implemented**; don't assume they exist. Cross-source correlation (DB + CloudWatch + New
-Relic) is currently entirely manual — the client model fans out to each source's tools and
-merges results itself, with no server-side guidance beyond the query cookbook.
+Cross-source correlation (DB + CloudWatch + New Relic) is currently entirely manual — the
+client model fans out to each source's tools and merges results itself, with no server-side
+guidance beyond the query cookbook. Composite tools `investigation_start` / `trace_request`
+and MCP prompts (`investigate_incident` / `trace_user_journey` / `slow_endpoint_rca`) are
+**not implemented**; don't assume they exist.
 
 ## Commands
 
