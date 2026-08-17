@@ -38,26 +38,61 @@ uv run investigation-server                      # start the MCP server (streama
 
 ## Architecture
 
-**Layering is strict and one-directional**: `tools/*` (the `@mcp.tool()`-decorated functions
-the client calls) → `integrations/<source>/guardrail.py` (validate/reject, pure functions,
-no I/O) → `integrations/<source>/client.py` or `engine.py` (actual network/DB I/O). Guardrail
-functions never touch the network; tool functions never build a query without passing it
-through the guardrail first. Each source under `tools/` is its own package
+**Layering is strict and one-directional**: `tools/*` (thin `@mcp.tool()`-decorated wrappers)
+→ `service/*` (business logic, one class per source) → `integrations/<source>/guardrail.py`
+(validate/reject, pure functions, no I/O) → `integrations/<source>/client.py` or `engine.py`
+(actual network/DB I/O). Guardrail functions never touch the network; service methods never
+build a query without passing it through the guardrail first.
+
+**`src/service/` holds one class per source** — `DatabaseService`, `CloudWatchService`,
+`NewRelicService` (`service/database_service.py`, `service/cloudwatch_service.py`,
+`service/newrelic_service.py`), all inheriting `BaseService` (`service/base.py`) for the
+shared `Settings` handle and the `ok(data, meta)` success-envelope helper. This is where a
+tool's actual logic (validate → execute → redact → structured response) lives; error-response
+translation for that source's exception family (`SQLAlchemyError` /
+`BotoCoreError`+`ClientError` / `httpx.HTTPError`) is a private method on the same class
+(`_sqlalchemy_error_response`, `_aws_error_response`, `_httpx_error_response`) rather than a
+shared abstract method, since the three sources don't share an exception type — forcing one
+would violate interface segregation for no benefit. Cross-tool logic that one source's several
+tools share (e.g. CloudWatch's `run_insights_query`, used by both `cw_run_insights_query` and
+`cw_get_trace_events`) is just another method on that source's service class, called from the
+other public methods — composition over duplicating the polling/cost-ceiling logic per tool.
+Network/DB clients are **constructor-injected** on `CloudWatchService`
+(`logs_client_factory`/`metrics_client_factory`, default the real boto3 factories) and
+`NewRelicService` (`run_nrql_fn`, defaults the real NerdGraph client) — dependency inversion,
+so unit tests pass a fake client into the constructor instead of monkeypatching module state;
+`DatabaseService` has no such seam because its only unit-level tests are integration tests
+against a real Postgres (see `tests/integration/test_db_tools.py`).
+
+**`tools/*` are thin MCP wrappers, nothing else**: each source is its own package
 (`tools/database/`, `tools/cloudwatch/`, `tools/newrelic/`) with **one file per tool**, named
-after the tool itself (e.g. `tools/database/db_resolve_store.py`), plus a package-local
-`utils.py` holding whatever that source's tool files share (error-response builders, client
-getters, regexes, multi-tool helpers like CloudWatch's `run_insights_query`). Tool files pull
-shared code via `from tools.<source> import utils` and call `utils.thing(...)` — always
-through the module, never `from tools.<source>.utils import thing` — so tests that
-`monkeypatch.setattr(utils, "thing", ...)` patch every tool file at once instead of just the
-one that happened to import it first. When adding a tool, follow this shape — see
-`tools/newrelic/nr_list_event_types.py` for the smallest complete example (guardrail → client
-→ redact → structured response). The one deliberate exception is inventory tools
-(`db_list_tables`, `cw_list_log_groups`,
-`nr_list_event_types`): they send a hardcoded, parameter-free (or window-clamped) query
-straight to the client, bypassing the query guardrail, since there's no user-supplied query
-text to validate — `nr_list_event_types` in particular sends `SHOW EVENT TYPES`, which isn't
-a `SELECT` and would otherwise be rejected by `validate_nrql`.
+after the tool itself (e.g. `tools/database/db_resolve_store.py`). A tool file's only job is
+the `@mcp.tool()` decorator, the docstring the client model reads, and the parameter schema —
+the body is one line pulling that source's service off the container and calling the matching
+method (see `tools/newrelic/nr_list_event_types.py` for the smallest complete example). Do not
+put logic in a tool file; if you're tempted to, it belongs on the service class instead. The
+one deliberate exception is inventory tools (`db_list_tables`, `cw_list_log_groups`,
+`nr_list_event_types`): their service methods send a hardcoded, parameter-free (or
+window-clamped) query straight to the client, bypassing the query guardrail, since there's no
+user-supplied query text to validate — `nr_list_event_types` in particular sends `SHOW EVENT
+TYPES`, which isn't a `SELECT` and would otherwise be rejected by `validate_nrql`.
+
+**`core/container.py` is the composition root** — the one place that constructs services and
+wires their dependencies. `Container` lazily builds and caches (singleton-scoped, per
+container instance) `database_service`/`cloudwatch_service`/`newrelic_service`, each backed by
+`self.settings` (which resolves through `get_settings()` unless a `Settings` override was
+passed to the constructor). Every dependency — `settings`, or a fully pre-built service — can
+also be injected via `Container(...)` keyword arguments; tests that want an isolated object
+graph build their own `Container` rather than reaching for the process-wide one.
+`get_container()` returns the process-wide singleton that `tools/*` call
+(`get_container().database_service.list_tables(...)`); `reset_container()` drops it so the
+next `get_container()` rebuilds against current `Settings` — call it after
+`get_settings.cache_clear()` in any test that routes through the container, the same way
+`reset_engine()` is called for the DB engine (`tests/conftest.py`'s `settings_override` does
+both). This container is *not* the seam individual service unit tests use — those construct
+the service directly with an injected fake client (see below) since that's simpler when you
+only need one service; the container exists for wiring the full tools → services graph in
+`server.py` and for tests that want that whole graph pre-assembled.
 
 **Three independent data sources, one shared pattern**: `database` (SQLAlchemy/asyncpg +
 `sqlglot` AST validation), `cloudwatch` (boto3 Logs Insights + a log-group allowlist + a
@@ -95,7 +130,11 @@ bare "denied". Every `@mcp.tool()` function catches its own `ToolError`s and con
 `@lru_cache def get_settings()`. Tests that change env vars must call
 `get_settings.cache_clear()` (and, for DB tests, `await reset_engine()` from
 `integrations/database/engine.py`) — see `tests/conftest.py`'s `settings_override` fixture
-and `tests/unit/test_newrelic_tools.py` for the pattern.
+and `tests/unit/test_newrelic_tools.py` for the pattern. Unit tests construct the service
+class directly (`CloudWatchService(get_settings(), logs_client_factory=lambda s: fake_client)`,
+`NewRelicService(get_settings(), run_nrql_fn=fake_run_nrql)`) rather than monkeypatching —
+prefer that constructor-injection seam over `monkeypatch.setattr` when a new service method
+needs a fake client/network call in tests.
 
 **Redaction is centralized and applied at the tool boundary**, not deeper in the stack:
 `core/redaction.py` masks PII by column name (`PII_COLUMN_NAMES`) and by regex pattern

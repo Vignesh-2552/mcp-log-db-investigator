@@ -4,10 +4,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from core.config import get_settings
-from tools.cloudwatch import utils as cw_utils
-from tools.cloudwatch.cw_describe_log_fields import cw_describe_log_fields
-from tools.cloudwatch.cw_get_trace_events import cw_get_trace_events
-from tools.cloudwatch.cw_run_insights_query import cw_run_insights_query
+from service.cloudwatch_service import CloudWatchService
 
 LOG_GROUP = "/aws/ecs/test-svc"
 
@@ -40,15 +37,19 @@ def _event(event_id: str, obj: dict) -> dict:
     return {"eventId": event_id, "message": json.dumps(obj)}
 
 
-def test_describe_log_fields_clusters_by_shape(monkeypatch: pytest.MonkeyPatch):
+def _service_with_logs_client(fake_client) -> CloudWatchService:
+    return CloudWatchService(get_settings(), logs_client_factory=lambda settings: fake_client)
+
+
+def test_describe_log_fields_clusters_by_shape():
     random_events = [
         _event(f"r{i}", {"level": "info", "method": "GET", "referer": "x"}) for i in range(3)
     ] + [_event("r-err", {"message": {"user": {"id": "u1"}}})]
     error_events = [_event("e1", {"message": {"user": {"id": "u2"}, "errors": [{"path": "x"}]}})]
     fake_client = _FakeLogsClient(random_events, error_events)
-    monkeypatch.setattr(cw_utils, "get_logs_client", lambda settings: fake_client)
+    service = _service_with_logs_client(fake_client)
 
-    result = cw_describe_log_fields(LOG_GROUP)
+    result = service.describe_log_fields(LOG_GROUP)
 
     assert result["ok"] is True
     shapes = result["data"]["shapes"]
@@ -70,21 +71,19 @@ def test_describe_log_fields_clusters_by_shape(monkeypatch: pytest.MonkeyPatch):
     assert result["meta"]["shape_count"] == 2
 
 
-def test_describe_log_fields_flags_correlation_id_candidates(monkeypatch: pytest.MonkeyPatch):
+def test_describe_log_fields_flags_correlation_id_candidates():
     events = [_event("r1", {"trace_id": "abc", "level": "info"})]
-    fake_client = _FakeLogsClient(events)
-    monkeypatch.setattr(cw_utils, "get_logs_client", lambda settings: fake_client)
+    service = _service_with_logs_client(_FakeLogsClient(events))
 
-    result = cw_describe_log_fields(LOG_GROUP)
+    result = service.describe_log_fields(LOG_GROUP)
 
     assert result["data"]["shapes"][0]["correlation_id_candidates"] == ["trace_id"]
 
 
-def test_describe_log_fields_empty_sample_note(monkeypatch: pytest.MonkeyPatch):
-    fake_client = _FakeLogsClient([{"eventId": "r1", "message": "not json"}])
-    monkeypatch.setattr(cw_utils, "get_logs_client", lambda settings: fake_client)
+def test_describe_log_fields_empty_sample_note():
+    service = _service_with_logs_client(_FakeLogsClient([{"eventId": "r1", "message": "not json"}]))
 
-    result = cw_describe_log_fields(LOG_GROUP)
+    result = service.describe_log_fields(LOG_GROUP)
 
     assert result["data"]["shapes"] == []
     assert result["data"]["note"] is not None
@@ -118,28 +117,24 @@ def _window():
     return start.isoformat(), end.isoformat()
 
 
-def test_run_insights_query_strips_ptr_by_default(monkeypatch: pytest.MonkeyPatch):
+def test_run_insights_query_strips_ptr_by_default():
     results = [[{"field": "@ptr", "value": "opaque"}, {"field": "@timestamp", "value": "t1"}]]
-    fake_client = _FakeInsightsClient(results, bytes_scanned=100)
-    monkeypatch.setattr(cw_utils, "get_logs_client", lambda settings: fake_client)
+    service = _service_with_logs_client(_FakeInsightsClient(results, bytes_scanned=100))
     start, end = _window()
 
-    result = cw_run_insights_query([LOG_GROUP], "fields @timestamp", start, end)
+    result = service.run_insights_query([LOG_GROUP], "fields @timestamp", start, end, 100, False)
 
     assert result["ok"] is True
     assert result["data"]["rows"] == [{"@timestamp": "t1"}]
     assert result["data"]["ptr_included"] is False
 
 
-def test_run_insights_query_keeps_ptr_when_requested(monkeypatch: pytest.MonkeyPatch):
+def test_run_insights_query_keeps_ptr_when_requested():
     results = [[{"field": "@ptr", "value": "opaque"}, {"field": "@timestamp", "value": "t1"}]]
-    fake_client = _FakeInsightsClient(results, bytes_scanned=100)
-    monkeypatch.setattr(cw_utils, "get_logs_client", lambda settings: fake_client)
+    service = _service_with_logs_client(_FakeInsightsClient(results, bytes_scanned=100))
     start, end = _window()
 
-    result = cw_run_insights_query(
-        [LOG_GROUP], "fields @timestamp", start, end, include_ptr=True
-    )
+    result = service.run_insights_query([LOG_GROUP], "fields @timestamp", start, end, 100, True)
 
     assert result["data"]["rows"] == [{"@ptr": "opaque", "@timestamp": "t1"}]
     assert result["data"]["ptr_included"] is True
@@ -148,11 +143,12 @@ def test_run_insights_query_keeps_ptr_when_requested(monkeypatch: pytest.MonkeyP
 def test_run_insights_query_ceiling_exceeded_suggests_window(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("CW_MAX_BYTES_SCANNED", "5000000000")
     get_settings.cache_clear()
-    fake_client = _FakeInsightsClient(results=[], bytes_scanned=10_000_000_000)
-    monkeypatch.setattr(cw_utils, "get_logs_client", lambda settings: fake_client)
+    service = _service_with_logs_client(
+        _FakeInsightsClient(results=[], bytes_scanned=10_000_000_000)
+    )
     start, end = _window()
 
-    result = cw_run_insights_query([LOG_GROUP], "fields @timestamp", start, end)
+    result = service.run_insights_query([LOG_GROUP], "fields @timestamp", start, end, 100, False)
 
     assert result["ok"] is False
     assert result["error"]["rule"] == "bytes_scanned_ceiling_exceeded"
@@ -170,37 +166,38 @@ def test_run_insights_query_ceiling_exceeded_suggests_window(monkeypatch: pytest
 def test_suggest_window_seconds_formula(bytes_scanned, ceiling, window_seconds, expected_max):
     start = datetime.now(UTC)
     end = start + timedelta(seconds=window_seconds)
-    suggestion = cw_utils.suggest_window_seconds(bytes_scanned, ceiling, start, end)
+    suggestion = CloudWatchService._suggest_window_seconds(bytes_scanned, ceiling, start, end)
     assert suggestion == expected_max
 
 
 def test_suggest_window_seconds_returns_none_for_degenerate_input():
     now = datetime.now(UTC)
-    assert cw_utils.suggest_window_seconds(0, 5000, now, now + timedelta(hours=1)) is None
-    assert cw_utils.suggest_window_seconds(100, 5000, now, now) is None
+    assert CloudWatchService._suggest_window_seconds(0, 5000, now, now + timedelta(hours=1)) is None
+    assert CloudWatchService._suggest_window_seconds(100, 5000, now, now) is None
 
 
 def test_get_trace_events_rejects_invalid_field():
+    service = CloudWatchService(get_settings())
     start, end = _window()
-    result = cw_get_trace_events(LOG_GROUP, "bad field!", "x", start, end)
+    result = service.get_trace_events(LOG_GROUP, "bad field!", "x", start, end)
     assert result["ok"] is False
     assert result["error"]["rule"] == "invalid_field_name"
 
 
 def test_get_trace_events_rejects_newline_in_value():
+    service = CloudWatchService(get_settings())
     start, end = _window()
-    result = cw_get_trace_events(LOG_GROUP, "trace_id", "line1\nline2", start, end)
+    result = service.get_trace_events(LOG_GROUP, "trace_id", "line1\nline2", start, end)
     assert result["ok"] is False
     assert result["error"]["rule"] == "invalid_trace_value"
 
 
-def test_get_trace_events_builds_and_executes_query(monkeypatch: pytest.MonkeyPatch):
+def test_get_trace_events_builds_and_executes_query():
     results = [[{"field": "@timestamp", "value": "t1"}]]
-    fake_client = _FakeInsightsClient(results, bytes_scanned=10)
-    monkeypatch.setattr(cw_utils, "get_logs_client", lambda settings: fake_client)
+    service = _service_with_logs_client(_FakeInsightsClient(results, bytes_scanned=10))
     start, end = _window()
 
-    result = cw_get_trace_events(LOG_GROUP, "trace_id", 'has "quote', start, end)
+    result = service.get_trace_events(LOG_GROUP, "trace_id", 'has "quote', start, end)
 
     assert result["ok"] is True
     assert result["data"]["field"] == "trace_id"

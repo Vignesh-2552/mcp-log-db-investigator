@@ -1,6 +1,5 @@
 from core.app import mcp
-from core.config import get_settings
-from tools.cloudwatch import utils
+from core.container import get_container
 
 
 @mcp.tool()
@@ -23,5 +22,6 @@ def cw_run_insights_query(
     AWS's opaque `@ptr` row pointer (~300 chars, no consumer for it in this
     server today) is stripped from every row by default; pass
     include_ptr=True to keep it."""
-    settings = get_settings()
-    return utils.run_insights_query(settings, log_groups, query, start, end, limit, include_ptr)
+    return get_container().cloudwatch_service.run_insights_query(
+        log_groups, query, start, end, limit, include_ptr
+    )

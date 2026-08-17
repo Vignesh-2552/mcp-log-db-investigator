@@ -1,10 +1,5 @@
-from sqlalchemy.exc import SQLAlchemyError
-
 from core.app import mcp
-from core.config import get_settings
-from core.errors import ToolError
-from integrations.database import introspect
-from tools.database import utils
+from core.container import get_container
 
 
 @mcp.tool()
@@ -19,12 +14,4 @@ async def db_search_by_identifier(identifier: str, id_type: str) -> dict:
     `data_freshness_note` warns when a 'no matches' result only reflects
     historical/migration-snapshot tables — check both before concluding an
     identifier doesn't exist anywhere."""
-    settings = get_settings()
-    try:
-        result = await introspect.search_by_identifier(identifier, id_type, settings)
-    except ToolError as e:
-        return e.to_response()
-    except SQLAlchemyError as e:
-        return utils.sqlalchemy_error_response(e)
-    total_rows = sum(m["row_count"] for m in result["matches"])
-    return {"ok": True, "data": result, "meta": {"row_count": total_rows}}
+    return await get_container().database_service.search_by_identifier(identifier, id_type)

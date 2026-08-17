@@ -6,22 +6,25 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from core.config import get_settings
+from core.container import reset_container
 from integrations.database.engine import reset_engine
 
 
 @pytest.fixture
 async def settings_override(monkeypatch: pytest.MonkeyPatch):
-    """Monkeypatch env vars and clear the Settings/engine caches so each
-    test gets a fresh, isolated configuration."""
+    """Monkeypatch env vars and clear the Settings/engine/container caches so
+    each test gets a fresh, isolated configuration."""
 
     async def _apply(**env: str) -> None:
         for key, value in env.items():
             monkeypatch.setenv(key.upper(), value)
         get_settings.cache_clear()
+        reset_container()
         await reset_engine()
 
     yield _apply
     get_settings.cache_clear()
+    reset_container()
     await reset_engine()
 
 
