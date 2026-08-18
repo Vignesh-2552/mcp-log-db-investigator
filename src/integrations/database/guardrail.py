@@ -6,10 +6,9 @@ from sqlglot import exp
 
 from core.errors import GuardrailError
 from core.logging_config import get_logger
+from integrations.database.constants import BLOCKED_NODES, DANGEROUS_FUNCTIONS, DIALECT
 
 logger = get_logger("database.guardrail")
-
-DIALECT = "postgres"
 
 
 def sqlalchemy_error_detail(e: SQLAlchemyError) -> str:
@@ -18,35 +17,6 @@ def sqlalchemy_error_detail(e: SQLAlchemyError) -> str:
     more specific than SQLAlchemy's own wrapper message."""
     orig = getattr(e, "orig", None)
     return str(orig) if orig is not None else str(e)
-
-# Reject any of these node types anywhere in the tree.
-BLOCKED_NODES = (
-    exp.Insert,
-    exp.Update,
-    exp.Delete,
-    exp.Merge,
-    exp.Create,
-    exp.Drop,
-    exp.Alter,
-    exp.Grant,
-    exp.TruncateTable,
-    exp.Copy,
-    exp.Command,
-)
-
-# Reject calls to these functions anywhere in the tree.
-DANGEROUS_FUNCTIONS = {
-    "pg_read_file",
-    "pg_read_binary_file",
-    "pg_ls_dir",
-    "pg_sleep",
-    "dblink",
-    "dblink_connect",
-    "lo_import",
-    "lo_export",
-    "pg_terminate_backend",
-    "pg_cancel_backend",
-}
 
 
 @dataclass

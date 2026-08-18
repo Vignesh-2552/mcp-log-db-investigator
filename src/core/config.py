@@ -1,7 +1,11 @@
+import logging
+import os
 from functools import lru_cache
 
-from pydantic import SecretStr
+from pydantic import SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_LEGACY_AWS_ENV_VARS = ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION")
 
 
 class Settings(BaseSettings):
@@ -50,6 +54,23 @@ class Settings(BaseSettings):
     pii_redaction: bool = True
     log_level: str = "INFO"
     log_format: str = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+
+    @model_validator(mode="after")
+    def _warn_on_unread_legacy_aws_env_vars(self) -> "Settings":
+        # CLOUDWATCH_ACCESS_KEY_ID/CLOUDWATCH_SECRET_ACCESS_KEY/CLOUDWATCH_REGION are the
+        # only names this app reads (see integrations/cloudwatch/client.py) — deliberately,
+        # with no AWS_* fallback. An operator upgrading from before that rename can still
+        # have the old AWS_* names set in their environment/.env and get no signal that
+        # they're now silently ignored (extra="ignore"), so warn instead of staying quiet.
+        legacy_set = [v for v in _LEGACY_AWS_ENV_VARS if os.environ.get(v)]
+        new_set = any([self.cloudwatch_access_key_id, self.cloudwatch_secret_access_key, self.cloudwatch_region])
+        if legacy_set and not new_set:
+            logging.getLogger("investigation_server.core.config").warning(
+                "%s set but not read by this app — CloudWatch tools use "
+                "CLOUDWATCH_ACCESS_KEY_ID/CLOUDWATCH_SECRET_ACCESS_KEY/CLOUDWATCH_REGION instead.",
+                ", ".join(legacy_set),
+            )
+        return self
 
     @property
     def cloudwatch_effective_region(self) -> str | None:

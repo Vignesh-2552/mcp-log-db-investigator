@@ -1,17 +1,16 @@
-import re
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 from core.errors import CWGuardrailError
 from core.logging_config import get_logger
+from integrations.cloudwatch.constants import (
+    BACKOFF_SCHEDULE,
+    RUNNING_STATUSES,
+    TRACE_FIELD_RE,
+)
 
 logger = get_logger("cloudwatch.guardrail")
-
-# Poll with backoff, capped at the caller's max_wait_s.
-_BACKOFF_SCHEDULE: tuple[float, ...] = (0.5, 1, 2, 4, 8, 8, 8, 8, 8, 8, 8, 8)
-
-_RUNNING_STATUSES = {"Running", "Scheduled"}
 
 
 def validate_log_groups(requested: list[str], allowlist: frozenset[str]) -> list[str]:
@@ -67,11 +66,8 @@ def clamp_window(
     return start_dt, end_dt
 
 
-_TRACE_FIELD_RE = re.compile(r"^[A-Za-z_@][A-Za-z0-9_.]*$")
-
-
 def validate_trace_field(field: str) -> str:
-    if not _TRACE_FIELD_RE.match(field):
+    if not TRACE_FIELD_RE.match(field):
         logger.warning("CloudWatch guardrail error (invalid_field_name): %r rejected", field)
         raise CWGuardrailError(
             rule="invalid_field_name",
@@ -110,7 +106,7 @@ def check_bytes_scanned(bytes_scanned: int, ceiling: int) -> None:
 def poll_query_with_backoff(
     poll_fn: Callable[[], dict],
     max_wait_s: int,
-    schedule: tuple[float, ...] = _BACKOFF_SCHEDULE,
+    schedule: tuple[float, ...] = BACKOFF_SCHEDULE,
     sleep_fn: Callable[[float], None] = time.sleep,
 ) -> dict:
     """Calls poll_fn() repeatedly with backoff until a terminal status is
@@ -118,7 +114,7 @@ def poll_query_with_backoff(
     elapsed = 0.0
     result = poll_fn()
     for delay in schedule:
-        if result.get("status") not in _RUNNING_STATUSES:
+        if result.get("status") not in RUNNING_STATUSES:
             return result
         if elapsed >= max_wait_s:
             break

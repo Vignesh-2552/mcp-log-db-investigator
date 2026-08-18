@@ -3,24 +3,10 @@ import httpx
 from core.config import Settings, get_settings
 from core.errors import ToolError
 from core.logging_config import get_logger
+from integrations.newrelic.models import NrqlRunResult
+from integrations.newrelic.queries import NRQL_GRAPHQL_QUERY
 
 logger = get_logger("newrelic.client")
-
-_NRQL_GRAPHQL_QUERY = """
-query($accountId: Int!, $nrql: Nrql!) {
-  actor {
-    account(id: $accountId) {
-      nrql(query: $nrql) {
-        results
-        metadata {
-          eventTypes
-          facets
-        }
-      }
-    }
-  }
-}
-"""
 
 
 async def run_nrql(query: str, settings: Settings | None = None) -> dict:
@@ -42,7 +28,7 @@ async def run_nrql(query: str, settings: Settings | None = None) -> dict:
                 "Content-Type": "application/json",
             },
             json={
-                "query": _NRQL_GRAPHQL_QUERY,
+                "query": NRQL_GRAPHQL_QUERY,
                 "variables": {"accountId": int(settings.new_relic_account_id), "nrql": query},
             },
         )
@@ -65,7 +51,7 @@ async def run_nrql(query: str, settings: Settings | None = None) -> dict:
         )
 
     nrql_result = account.get("nrql") or {}
-    return {
-        "results": nrql_result.get("results", []),
-        "metadata": nrql_result.get("metadata", {}),
-    }
+    return NrqlRunResult(
+        results=nrql_result.get("results", []),
+        metadata=nrql_result.get("metadata", {}),
+    ).to_dict()

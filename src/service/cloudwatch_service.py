@@ -1,6 +1,5 @@
 import hashlib
 import json
-import re
 from collections import defaultdict
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -10,9 +9,15 @@ from botocore.exceptions import BotoCoreError, ClientError
 
 from core.config import Settings
 from core.errors import ToolError
+from core.field_heuristics import CORRELATION_ID_RE as _CORRELATION_ID_RE
 from core.logging_config import get_logger
 from core.redaction import redact_log_event
 from integrations.cloudwatch.client import get_logs_client, get_metrics_client
+from integrations.cloudwatch.constants import (
+    BYTES_SCANNED_SAFETY_MARGIN,
+    FILTER_EVENTS_CAP,
+    RUNNING_STATUSES,
+)
 from integrations.cloudwatch.guardrail import (
     build_trace_filter_value,
     check_bytes_scanned,
@@ -21,16 +26,24 @@ from integrations.cloudwatch.guardrail import (
     validate_log_groups,
     validate_trace_field,
 )
+from integrations.cloudwatch.models import (
+    FieldFrequency,
+    FilterEventsResult,
+    LogEvent,
+    LogFieldShape,
+    LogFieldsResult,
+    LogGroupSummary,
+    MetricStatsResult,
+    QueryPollResult,
+    SampleComposition,
+)
+from integrations.cloudwatch.queries import (
+    ERROR_BOOST_FILTER_PATTERN,
+    build_trace_query,
+)
 from service.base import BaseService
 
 logger = get_logger("cloudwatch.service")
-
-_ERROR_BOOST_FILTER_PATTERN = "?ERROR ?error ?Error ?FATAL ?fatal ?CRITICAL ?critical"
-_CORRELATION_ID_RE = re.compile(
-    r"(trace|span|request|correlation|order|user|session|transaction)[._-]?id", re.IGNORECASE
-)
-_FILTER_EVENTS_CAP = 1000
-_BYTES_SCANNED_SAFETY_MARGIN = 0.8  # target 80% of the ceiling, not the ceiling itself
 
 
 class CloudWatchService(BaseService):
@@ -107,7 +120,7 @@ class CloudWatchService(BaseService):
         if requested_window_s <= 0 or bytes_scanned <= 0:
             return None
         scan_rate = bytes_scanned / requested_window_s
-        return max(int((ceiling * _BYTES_SCANNED_SAFETY_MARGIN) / scan_rate), 1)
+        return max(int((ceiling * BYTES_SCANNED_SAFETY_MARGIN) / scan_rate), 1)
 
     def list_log_groups(self, prefix: str | None = None) -> dict:
         settings = self.settings
@@ -123,15 +136,15 @@ class CloudWatchService(BaseService):
                     if allowlist and name not in allowlist:
                         continue
                     groups.append(
-                        {
-                            "log_group": name,
-                            "retention_days": g.get("retentionInDays"),
-                            "stored_bytes": g.get("storedBytes"),
-                        }
+                        LogGroupSummary(
+                            log_group=name,
+                            retention_days=g.get("retentionInDays"),
+                            stored_bytes=g.get("storedBytes"),
+                        )
                     )
         except (BotoCoreError, ClientError) as e:
             return self._aws_error_response(e)
-        return self.ok({"log_groups": groups}, {"row_count": len(groups)})
+        return self.ok({"log_groups": [g.to_dict() for g in groups]}, {"row_count": len(groups)})
 
     def describe_log_fields(self, log_group: str) -> dict:
         settings = self.settings
@@ -149,7 +162,7 @@ class CloudWatchService(BaseService):
             error_events = client.filter_log_events(
                 logGroupName=log_group,
                 startTime=start_time,
-                filterPattern=_ERROR_BOOST_FILTER_PATTERN,
+                filterPattern=ERROR_BOOST_FILTER_PATTERN,
                 limit=settings.cw_describe_fields_error_boost_size,
             ).get("events", [])
 
@@ -187,25 +200,25 @@ class CloudWatchService(BaseService):
                 for path in self._flatten_field_paths(obj):
                     cluster["field_counts"][path] += 1
 
-            shapes = []
+            shapes: list[LogFieldShape] = []
             for _, cluster in sorted(clusters.items(), key=lambda kv: -kv[1]["row_count"]):
                 shape_id = hashlib.sha1(",".join(cluster["top_level_keys"]).encode()).hexdigest()[:8]
                 fields = [
-                    {"field": k, "frequency": v}
+                    FieldFrequency(field=k, frequency=v)
                     for k, v in sorted(cluster["field_counts"].items(), key=lambda kv: -kv[1])
                 ]
                 shapes.append(
-                    {
-                        "shape_id": shape_id,
-                        "top_level_keys": cluster["top_level_keys"],
-                        "row_count": cluster["row_count"],
-                        "sample_composition": cluster["composition"],
-                        "fields": fields,
-                        "example_event": redact_log_event(cluster["example_event"], settings),
-                        "correlation_id_candidates": sorted(
+                    LogFieldShape(
+                        shape_id=shape_id,
+                        top_level_keys=cluster["top_level_keys"],
+                        row_count=cluster["row_count"],
+                        sample_composition=SampleComposition(**cluster["composition"]),
+                        fields=fields,
+                        example_event=redact_log_event(cluster["example_event"], settings),
+                        correlation_id_candidates=sorted(
                             f for f in cluster["field_counts"] if _CORRELATION_ID_RE.search(f)
                         ),
-                    }
+                    )
                 )
 
             total_events = len(tagged_events)
@@ -217,20 +230,17 @@ class CloudWatchService(BaseService):
         except (BotoCoreError, ClientError) as e:
             return self._aws_error_response(e)
 
-        return self.ok(
-            {
-                "log_group": log_group,
-                "sampled_events": total_events,
-                "parsed_as_json": parsed,
-                "sample_composition": {
-                    "random": len(random_events),
-                    "error_boosted": total_events - len(random_events),
-                },
-                "shapes": shapes,
-                "note": note,
-            },
-            {"shape_count": len(shapes), "sampled_events": total_events},
+        result = LogFieldsResult(
+            log_group=log_group,
+            sampled_events=total_events,
+            parsed_as_json=parsed,
+            sample_composition=SampleComposition(
+                random=len(random_events), error_boosted=total_events - len(random_events)
+            ),
+            shapes=shapes,
+            note=note,
         )
+        return self.ok(result.to_dict(), {"shape_count": len(shapes), "sampled_events": total_events})
 
     def run_insights_query(
         self,
@@ -264,18 +274,18 @@ class CloudWatchService(BaseService):
             def poll_fn() -> dict:
                 resp = client.get_query_results(queryId=query_id)
                 stats = resp.get("statistics", {})
-                return {
-                    "status": resp.get("status"),
-                    "results": resp.get("results", []),
-                    "bytes_scanned": int(stats.get("bytesScanned", 0)),
-                    "records_matched": stats.get("recordsMatched"),
-                }
+                return QueryPollResult(
+                    status=resp.get("status"),
+                    results=resp.get("results", []),
+                    bytes_scanned=int(stats.get("bytesScanned", 0)),
+                    records_matched=stats.get("recordsMatched"),
+                ).to_dict()
 
             poll_result = poll_query_with_backoff(poll_fn, settings.cw_poll_max_wait_s)
             bytes_scanned = poll_result.get("bytes_scanned", 0)
 
             if bytes_scanned > settings.cw_max_bytes_scanned:
-                if poll_result.get("status") in ("Running", "Scheduled"):
+                if poll_result.get("status") in RUNNING_STATUSES:
                     client.stop_query(queryId=query_id)
                 check_bytes_scanned(bytes_scanned, settings.cw_max_bytes_scanned)
 
@@ -298,22 +308,20 @@ class CloudWatchService(BaseService):
         except (BotoCoreError, ClientError) as e:
             return self._aws_error_response(e)
 
-        if poll_result["status"] in ("Running", "Scheduled"):
-            return {
-                "ok": True,
-                "data": {
+        if poll_result["status"] in RUNNING_STATUSES:
+            return self.ok(
+                {
                     "status": "Running",
                     "query_id": query_id,
                     "note": "Query is still running; poll again later with this query_id.",
                     "bytes_scanned": bytes_scanned,
                 },
-                "meta": {"bytes_scanned": bytes_scanned},
-            }
+                {"bytes_scanned": bytes_scanned},
+            )
 
         rows = self._build_rows(poll_result["results"], include_ptr)
-        return {
-            "ok": True,
-            "data": {
+        return self.ok(
+            {
                 "status": poll_result["status"],
                 "query_id": query_id,
                 "rows": rows,
@@ -322,8 +330,8 @@ class CloudWatchService(BaseService):
                 "records_matched": poll_result.get("records_matched"),
                 "ptr_included": include_ptr,
             },
-            "meta": {"row_count": len(rows), "bytes_scanned": bytes_scanned},
-        }
+            {"row_count": len(rows), "bytes_scanned": bytes_scanned},
+        )
 
     def get_trace_events(
         self,
@@ -340,7 +348,7 @@ class CloudWatchService(BaseService):
             escaped_value = build_trace_filter_value(value)
         except ToolError as e:
             return e.to_response()
-        query = f'fields @timestamp, @message | filter {field} = "{escaped_value}" | sort @timestamp asc'
+        query = build_trace_query(field, escaped_value)
         response = self.run_insights_query([log_group], query, start, end, limit, include_ptr)
         if response.get("ok"):
             response["data"].update(
@@ -365,7 +373,7 @@ class CloudWatchService(BaseService):
                 filterPattern=pattern,
                 startTime=self._epoch_millis(start_dt),
                 endTime=self._epoch_millis(end_dt),
-                limit=_FILTER_EVENTS_CAP,
+                limit=FILTER_EVENTS_CAP,
             )
         except ToolError as e:
             return e.to_response()
@@ -373,17 +381,15 @@ class CloudWatchService(BaseService):
             return self._aws_error_response(e)
 
         events = [
-            {
-                "timestamp": e.get("timestamp"),
-                "message": redact_log_event(e.get("message", ""), settings),
-                "log_stream": e.get("logStreamName"),
-            }
+            LogEvent(
+                timestamp=e.get("timestamp"),
+                message=redact_log_event(e.get("message", ""), settings),
+                log_stream=e.get("logStreamName"),
+            )
             for e in response.get("events", [])
         ]
-        return self.ok(
-            {"log_group": log_group, "events": events, "event_count": len(events)},
-            {"row_count": len(events)},
-        )
+        result = FilterEventsResult(log_group=log_group, events=events, event_count=len(events))
+        return self.ok(result.to_dict(), {"row_count": len(events)})
 
     def get_metric_stats(
         self,
@@ -417,7 +423,5 @@ class CloudWatchService(BaseService):
         datapoints = sorted(response.get("Datapoints", []), key=lambda dp: dp["Timestamp"])
         for dp in datapoints:
             dp["Timestamp"] = dp["Timestamp"].isoformat()
-        return self.ok(
-            {"namespace": namespace, "metric": metric, "datapoints": datapoints},
-            {"row_count": len(datapoints)},
-        )
+        result = MetricStatsResult(namespace=namespace, metric=metric, datapoints=datapoints)
+        return self.ok(result.to_dict(), {"row_count": len(datapoints)})

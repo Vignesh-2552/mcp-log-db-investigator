@@ -49,7 +49,7 @@ class DatabaseService(BaseService):
             return e.to_response()
         except SQLAlchemyError as e:
             return self._sqlalchemy_error_response(e)
-        return self.ok({"tables": tables}, {"row_count": len(tables)})
+        return self.ok({"tables": [t.to_dict() for t in tables]}, {"row_count": len(tables)})
 
     async def describe_table(self, table: str) -> dict:
         try:
@@ -58,7 +58,7 @@ class DatabaseService(BaseService):
             return e.to_response()
         except SQLAlchemyError as e:
             return self._sqlalchemy_error_response(e)
-        return self.ok(detail)
+        return self.ok(detail.to_dict())
 
     async def sample_rows(self, table: str, limit: int = 5) -> dict:
         try:
@@ -67,7 +67,7 @@ class DatabaseService(BaseService):
             return e.to_response()
         except SQLAlchemyError as e:
             return self._sqlalchemy_error_response(e)
-        return self.ok(result, {"row_count": result["row_count"]})
+        return self.ok(result.to_dict(), {"row_count": result.row_count})
 
     async def explain_query(self, sql: str) -> dict:
         try:
@@ -119,8 +119,8 @@ class DatabaseService(BaseService):
             return e.to_response()
         except SQLAlchemyError as e:
             return self._sqlalchemy_error_response(e)
-        total_rows = sum(m["row_count"] for m in result["matches"])
-        return self.ok(result, {"row_count": total_rows})
+        total_rows = sum(m.row_count for m in result.matches)
+        return self.ok(result.to_dict(), {"row_count": total_rows})
 
     async def resolve_store(self, name_or_domain: str) -> dict:
         try:
@@ -129,4 +129,4 @@ class DatabaseService(BaseService):
             return e.to_response()
         except SQLAlchemyError as e:
             return self._sqlalchemy_error_response(e)
-        return self.ok(result, {"candidate_count": len(result["candidates"])})
+        return self.ok(result.to_dict(), {"candidate_count": len(result.candidates)})

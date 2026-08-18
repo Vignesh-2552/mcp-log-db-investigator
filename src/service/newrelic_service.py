@@ -1,19 +1,24 @@
-import re
 from collections.abc import Awaitable, Callable
 
 import httpx
 
 from core.config import Settings
 from core.errors import ToolError
+from core.field_heuristics import CORRELATION_ID_RE as _CORRELATION_ID_RE
 from core.redaction import redact_rows
 from integrations.newrelic.client import run_nrql
+from integrations.newrelic.constants import EVENT_TYPE_RE
 from integrations.newrelic.guardrail import validate_nrql
-from service.base import BaseService
-
-_EVENT_TYPE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-_CORRELATION_ID_RE = re.compile(
-    r"(trace|span|request|correlation|order|user|session|transaction)[._-]?id", re.IGNORECASE
+from integrations.newrelic.models import (
+    EventTypesResult,
+    LogFieldsResult,
+    NrqlQueryResult,
 )
+from integrations.newrelic.queries import (
+    build_keyset_query,
+    build_show_event_types_query,
+)
+from service.base import BaseService
 
 
 class NewRelicService(BaseService):
@@ -44,7 +49,7 @@ class NewRelicService(BaseService):
 
     async def describe_log_fields(self, event_type: str = "Log", hours: int = 1) -> dict:
         settings = self.settings
-        if not _EVENT_TYPE_RE.match(event_type):
+        if not EVENT_TYPE_RE.match(event_type):
             return ToolError(
                 rule="invalid_event_type",
                 message="event_type must be a bare identifier (letters, digits, underscore).",
@@ -52,7 +57,7 @@ class NewRelicService(BaseService):
             ).to_response()
 
         window = max(1, min(hours, settings.nr_max_window_hours))
-        query = f"SELECT keyset() FROM {event_type} SINCE {window} hour ago"
+        query = build_keyset_query(event_type, window)
         try:
             validated_query = validate_nrql(query, settings.nr_max_rows)
             result = await self._run_nrql(validated_query, settings)
@@ -71,21 +76,19 @@ class NewRelicService(BaseService):
                 "confirm the event type name (e.g. Log, Transaction, Span)."
             )
 
-        return self.ok(
-            {
-                "event_type": event_type,
-                "window_hours": window,
-                "fields": keys,
-                "correlation_id_candidates": correlation_candidates,
-                "note": note,
-            },
-            {"field_count": len(keys)},
+        result_model = LogFieldsResult(
+            event_type=event_type,
+            window_hours=window,
+            fields=keys,
+            correlation_id_candidates=correlation_candidates,
+            note=note,
         )
+        return self.ok(result_model.to_dict(), {"field_count": len(keys)})
 
     async def list_event_types(self, hours: int = 24) -> dict:
         settings = self.settings
         window = max(1, min(hours, settings.nr_max_window_hours))
-        query = f"SHOW EVENT TYPES SINCE {window} hour ago"
+        query = build_show_event_types_query(window)
         try:
             result = await self._run_nrql(query, settings)
         except ToolError as e:
@@ -101,10 +104,8 @@ class NewRelicService(BaseService):
         if not event_types:
             note = f"No event types found with data in the last {window}h — widen `hours`."
 
-        return self.ok(
-            {"window_hours": window, "event_types": event_types, "note": note},
-            {"event_type_count": len(event_types)},
-        )
+        result_model = EventTypesResult(window_hours=window, event_types=event_types, note=note)
+        return self.ok(result_model.to_dict(), {"event_type_count": len(event_types)})
 
     async def run_nrql_query(self, query: str, limit: int = 100) -> dict:
         settings = self.settings
@@ -120,12 +121,10 @@ class NewRelicService(BaseService):
         if rows and isinstance(rows[0], dict):
             rows = redact_rows(rows, settings)
 
-        return self.ok(
-            {
-                "executed_query": validated_query,
-                "rows": rows,
-                "row_count": len(rows),
-                "metadata": result["metadata"],
-            },
-            {"row_count": len(rows)},
+        result_model = NrqlQueryResult(
+            executed_query=validated_query,
+            rows=rows,
+            row_count=len(rows),
+            metadata=result["metadata"],
         )
+        return self.ok(result_model.to_dict(), {"row_count": len(rows)})

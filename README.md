@@ -28,7 +28,7 @@ to change the bind address.
 CloudWatch tools (`cw_*`) call real `boto3`/AWS APIs; set `CLOUDWATCH_REGION`
 (required — there is no `AWS_REGION` fallback), `AWS_PROFILE` (or
 `CLOUDWATCH_ACCESS_KEY_ID`/`CLOUDWATCH_SECRET_ACCESS_KEY`), and
-`CW_LOG_GROUP_ALLOWLIST` to use them.
+`CLOUDWATCH_ALLOWED_LOG_GROUP` to use them.
 
 ## Registering with an MCP client
 
