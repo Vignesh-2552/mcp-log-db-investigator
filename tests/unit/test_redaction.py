@@ -47,6 +47,30 @@ def test_redact_row_still_masks_pii_column_names():
     assert result["email"] == "[REDACTED]"
 
 
+def test_redact_row_recurses_into_structured_values():
+    row = {
+        "payload": {
+            "email": "nested@example.com",
+            "profile": {"note": "contact nested@example.com"},
+            "items": ["4111 1111 1111 1111", {"access_token": "secret"}],
+        },
+        "values": ("person@example.com",),
+    }
+
+    result = redact_row(row, _ENABLED)
+
+    assert result["payload"]["email"] == "[REDACTED]"
+    assert result["payload"]["profile"]["note"] == "contact [REDACTED_EMAIL]"
+    assert result["payload"]["items"] == ["[REDACTED_CARD]", {"access_token": "[REDACTED]"}]
+    assert result["values"] == ("[REDACTED_EMAIL]",)
+
+
+def test_redaction_disabled_preserves_nested_object_identity():
+    row = {"payload": {"email": "nested@example.com"}}
+
+    assert redact_row(row, _DISABLED) is row
+
+
 def test_redact_log_event_preserves_uuid_inside_json_text():
     message = '{"user":{"customerId":"00000000-0000-0000-0000-000000000000"}}'
     assert redact_log_event(message, _ENABLED) == message

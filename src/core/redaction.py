@@ -1,4 +1,5 @@
 import re
+from collections.abc import Mapping
 from typing import Any
 
 from core.config import Settings, get_settings
@@ -65,15 +66,29 @@ def redact_text(value: str) -> str:
 def redact_row(row: dict[str, Any], settings: Settings | None = None) -> dict[str, Any]:
     if not enabled(settings):
         return row
-    redacted: dict[str, Any] = {}
-    for key, value in row.items():
-        if key.lower() in PII_COLUMN_NAMES:
-            redacted[key] = "[REDACTED]" if value is not None else None
-        elif isinstance(value, str):
-            redacted[key] = redact_text(value)
+    return _redact_mapping(row)
+
+
+def _redact_mapping(value: Mapping[Any, Any]) -> dict[Any, Any]:
+    redacted: dict[Any, Any] = {}
+    for key, item in value.items():
+        if isinstance(key, str) and key.lower() in PII_COLUMN_NAMES:
+            redacted[key] = "[REDACTED]" if item is not None else None
         else:
-            redacted[key] = value
+            redacted[key] = _redact_value(item)
     return redacted
+
+
+def _redact_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return redact_text(value)
+    if isinstance(value, Mapping):
+        return _redact_mapping(value)
+    if isinstance(value, list):
+        return [_redact_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_redact_value(item) for item in value)
+    return value
 
 
 def redact_rows(rows: list[dict[str, Any]], settings: Settings | None = None) -> list[dict[str, Any]]:

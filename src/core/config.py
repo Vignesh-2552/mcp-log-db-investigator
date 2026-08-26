@@ -48,7 +48,9 @@ class Settings(BaseSettings):
     nr_max_rows: int = 500
 
     # Server
-    server_host: str = "0.0.0.0"
+    # Keep the unauthenticated HTTP transport local by default. Operators who
+    # deliberately expose it through an authenticated proxy can override this.
+    server_host: str = "127.0.0.1"
     server_port: int = 8000
     server_path: str = "/mcp"
     pii_redaction: bool = True

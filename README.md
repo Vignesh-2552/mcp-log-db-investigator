@@ -21,9 +21,11 @@ Edit `.env` and set `DB_URL` to your PostgreSQL connection string
 (e.g. `postgresql+psycopg://user:pass@host:5432/dbname`).
 See `.env.example` for every available variable.
 
-The server starts on `http://0.0.0.0:8000/mcp` by default (streamable HTTP
-transport). Adjust `SERVER_HOST`, `SERVER_PORT`, and `SERVER_PATH` in `.env`
-to change the bind address.
+The server starts on `http://127.0.0.1:8000/mcp` by default (streamable HTTP
+transport). It does not provide built-in HTTP authentication, so only set
+`SERVER_HOST` to a non-loopback address when access is protected by an
+authenticated proxy or equivalent network control. Adjust `SERVER_PORT` and
+`SERVER_PATH` in `.env` as needed.
 
 CloudWatch tools (`cw_*`) call real `boto3`/AWS APIs; set `CLOUDWATCH_REGION`
 (required — there is no `AWS_REGION` fallback), `AWS_PROFILE` (or

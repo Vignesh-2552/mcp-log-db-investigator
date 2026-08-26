@@ -131,7 +131,9 @@ async def sample_rows(table: str, limit: int, settings: Settings | None = None) 
     clamped_limit = max(1, min(limit, settings.db_max_rows))
     engine = get_engine(settings)
     async with engine.connect() as conn:
-        result = await conn.execute(text(build_sample_rows_sql(qualified)), {"limit": clamped_limit})
+        result = await conn.execute(
+            text(build_sample_rows_sql(schema, name)), {"limit": clamped_limit}
+        )
         columns = list(result.keys())
         rows = [dict(zip(columns, row)) for row in result.fetchall()]
     rows = redact_rows(rows, settings)

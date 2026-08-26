@@ -2,6 +2,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from sqlalchemy import event
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 
 from core.config import Settings, get_settings
@@ -46,7 +47,10 @@ def get_engine(settings: Settings | None = None) -> AsyncEngine:
     global _engine
     if _engine is None:
         settings = settings or get_settings()
-        logger.info("Initializing DB engine for DSN: %s", settings.db_dsn)
+        logger.info(
+            "Initializing DB engine for DSN: %s",
+            make_url(settings.db_dsn).render_as_string(hide_password=True),
+        )
         _engine = create_async_engine(settings.db_dsn, pool_pre_ping=True)
         _harden_session(_engine, settings)
     return _engine

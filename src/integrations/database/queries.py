@@ -55,7 +55,10 @@ def quote_ident(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
 
 
-def build_sample_rows_sql(qualified_table: str) -> str:
+def build_sample_rows_sql(schema: str | None, table: str) -> str:
+    qualified_table = (
+        f"{quote_ident(schema)}.{quote_ident(table)}" if schema else quote_ident(table)
+    )
     return f"SELECT * FROM {qualified_table} LIMIT :limit"
 
 
