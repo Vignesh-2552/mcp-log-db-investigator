@@ -57,6 +57,34 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_format: str = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 
+    # Shared-secret bearer token required on every MCP request once set (see
+    # core/auth.py). Required for any non-loopback SERVER_HOST — the
+    # streamable-HTTP transport has no other authentication.
+    mcp_auth_token: SecretStr | None = None
+
+    @model_validator(mode="after")
+    def _fall_back_server_port_to_platform_port(self) -> "Settings":
+        # Render/Railway/Heroku-style platforms assign a listen port via $PORT
+        # and expect the app to bind it; only apply this when the operator
+        # hasn't explicitly set SERVER_PORT themselves. This class's env
+        # lookup is case-insensitive (case_sensitive=False above), so match
+        # that here with a case-insensitive scan rather than a literal
+        # "SERVER_PORT" in os.environ check — otherwise an operator-set
+        # `server_port`/`Server_Port` env var would go undetected and be
+        # silently overridden by $PORT.
+        platform_port = os.environ.get("PORT")
+        server_port_explicitly_set = any(k.upper() == "SERVER_PORT" for k in os.environ)
+        if platform_port and not server_port_explicitly_set:
+            try:
+                self.server_port = int(platform_port)
+            except ValueError:
+                logging.getLogger("investigation_server.core.config").warning(
+                    "$PORT=%r is not a valid integer — ignoring, using SERVER_PORT=%s",
+                    platform_port,
+                    self.server_port,
+                )
+        return self
+
     @model_validator(mode="after")
     def _warn_on_unread_legacy_aws_env_vars(self) -> "Settings":
         # CLOUDWATCH_ACCESS_KEY_ID/CLOUDWATCH_SECRET_ACCESS_KEY/CLOUDWATCH_REGION are the
