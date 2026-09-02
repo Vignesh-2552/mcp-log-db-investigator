@@ -51,29 +51,21 @@ class Settings(BaseSettings):
     # Keep the unauthenticated HTTP transport local by default. Operators who
     # deliberately expose it through an authenticated proxy can override this.
     server_host: str = "127.0.0.1"
-    server_port: int = 8000
+    server_port: int = 8001
     server_path: str = "/mcp"
     pii_redaction: bool = True
     log_level: str = "INFO"
     log_format: str = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-
-    # Shared-secret bearer token required on every MCP request once set (see
-    # core/auth.py). Required for any non-loopback SERVER_HOST — the
-    # streamable-HTTP transport has no other authentication.
-    mcp_auth_token: SecretStr | None = None
 
     @model_validator(mode="after")
     def _fall_back_server_port_to_platform_port(self) -> "Settings":
         # Render/Railway/Heroku-style platforms assign a listen port via $PORT
         # and expect the app to bind it; only apply this when the operator
         # hasn't explicitly set SERVER_PORT themselves. This class's env
-        # lookup is case-insensitive (case_sensitive=False above), so match
-        # that here with a case-insensitive scan rather than a literal
-        # "SERVER_PORT" in os.environ check — otherwise an operator-set
-        # `server_port`/`Server_Port` env var would go undetected and be
-        # silently overridden by $PORT.
+        # lookup is case-insensitive (case_sensitive=False above), and
+        # model_fields_set records values supplied by any settings source.
         platform_port = os.environ.get("PORT")
-        server_port_explicitly_set = any(k.upper() == "SERVER_PORT" for k in os.environ)
+        server_port_explicitly_set = "server_port" in self.model_fields_set
         if platform_port and not server_port_explicitly_set:
             try:
                 self.server_port = int(platform_port)

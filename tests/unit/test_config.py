@@ -38,3 +38,12 @@ def test_lowercase_server_port_env_var_still_wins_over_platform_port(monkeypatch
     monkeypatch.setenv("PORT", "10000")
 
     assert Settings(_env_file=None).server_port == 9000
+
+
+def test_server_port_from_env_file_wins_over_platform_port(monkeypatch, tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text("SERVER_PORT=9000\n", encoding="utf-8")
+    monkeypatch.delenv("SERVER_PORT", raising=False)
+    monkeypatch.setenv("PORT", "10000")
+
+    assert Settings(_env_file=env_file).server_port == 9000

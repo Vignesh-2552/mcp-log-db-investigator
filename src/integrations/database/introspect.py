@@ -65,7 +65,7 @@ def _sync_describe_table(sync_conn, name: str, schema: str | None) -> dict[str, 
     }
 
 
-@ttl_cache(maxsize=8, ttl_seconds=600)
+@ttl_cache(maxsize=8, ttl_seconds=lambda: get_settings().db_schema_cache_ttl_s)
 async def _list_tables_cached(schema: str | None) -> list[TableSummary]:
     """One round-trip regardless of table count (was 2 * N round-trips
     before — fine on local Postgres, painfully slow over a real network
@@ -86,7 +86,7 @@ async def _list_tables_cached(schema: str | None) -> list[TableSummary]:
 
 
 async def list_tables(schema: str | None) -> list[TableSummary]:
-    """Cached ~10min."""
+    """Cached for the configured DB_SCHEMA_CACHE_TTL_S."""
     return await _list_tables_cached(schema)
 
 
@@ -163,7 +163,7 @@ def _entity_name_candidates(id_type: str) -> list[str]:
     return sorted(candidates)
 
 
-@ttl_cache(maxsize=64, ttl_seconds=600)
+@ttl_cache(maxsize=64, ttl_seconds=lambda: get_settings().db_schema_cache_ttl_s)
 async def _find_tables_with_column(column_name: str) -> list[tuple[str, str]]:
     engine = get_engine()
     async with engine.connect() as conn:
@@ -171,7 +171,7 @@ async def _find_tables_with_column(column_name: str) -> list[tuple[str, str]]:
         return [(row.schema, row.table_name) for row in result]
 
 
-@ttl_cache(maxsize=64, ttl_seconds=600)
+@ttl_cache(maxsize=64, ttl_seconds=lambda: get_settings().db_schema_cache_ttl_s)
 async def _find_entity_tables(entity_candidates: tuple[str, ...]) -> list[tuple[str, str, str]]:
     if not entity_candidates:
         return []
@@ -366,7 +366,7 @@ def _domain_search_variants(name_or_domain: str) -> list[str]:
     return [name_or_domain] if bare == name_or_domain else [name_or_domain, bare]
 
 
-@ttl_cache(maxsize=8, ttl_seconds=600)
+@ttl_cache(maxsize=8, ttl_seconds=lambda: get_settings().db_schema_cache_ttl_s)
 async def _find_store_identifier_columns(column_names: tuple[str, ...]) -> list[tuple[str, str, str]]:
     engine = get_engine()
     async with engine.connect() as conn:

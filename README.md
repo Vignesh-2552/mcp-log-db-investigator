@@ -49,28 +49,13 @@ CloudWatch tools (`cw_*`) call real `boto3`/AWS APIs; set `CLOUDWATCH_REGION`
 
 **Claude Desktop** — same shape in `claude_desktop_config.json`.
 
-If `MCP_AUTH_TOKEN` is set (see below), add an `Authorization` header:
-
-```json
-{
-  "mcpServers": {
-    "investigation": {
-      "type": "http",
-      "url": "https://<your-deployment>/mcp",
-      "headers": { "Authorization": "Bearer <your MCP_AUTH_TOKEN>" }
-    }
-  }
-}
-```
-
 ## Deploying
 
-The streamable-HTTP transport has no authentication of its own, so
-`core/auth.py` adds a bearer-token check (`MCP_AUTH_TOKEN`) — leaving it
-unset while `SERVER_HOST` is non-loopback logs a warning at startup and
-leaves the endpoint open. See [`docs/deployment.md`](docs/deployment.md) for
-the full pre-deploy checklist, environment variable reference, Horizon
-deployment steps, post-deploy verification, and common pitfalls.
+The streamable-HTTP transport has no authentication of its own. Horizon's
+OAuth 2.1 gateway provides authentication before requests reach the server.
+For any other hosting setup, place the server behind an authenticated proxy
+or equivalent network control. See [`docs/deployment.md`](docs/deployment.md)
+for the full deployment checklist and verification steps.
 
 ## Tool catalog
 
