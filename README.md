@@ -63,41 +63,14 @@ If `MCP_AUTH_TOKEN` is set (see below), add an `Authorization` header:
 }
 ```
 
-## Deploying (Prefect Horizon)
+## Deploying
 
-The streamable-HTTP transport has no authentication of its own at the
-application level, so `core/auth.py` adds a bearer-token check
-(`MCP_AUTH_TOKEN`) as a baseline — leaving it unset while `SERVER_HOST` is
-non-loopback logs a warning at startup and leaves the endpoint open. Keep
-`MCP_AUTH_TOKEN` set as defense-in-depth even on platforms with their own
-gateway auth (see below).
-
-[Horizon](https://horizon.prefect.io) (from the FastMCP team) deploys
-straight from a git repo — no Dockerfile needed:
-
-1. Push this repo to GitHub/GitLab.
-2. Horizon dashboard → connect the repo. It detects the Python/FastMCP
-   project and builds/containerizes it automatically.
-3. Set environment variables from `.env.example` (`DB_URL`, `MCP_AUTH_TOKEN`,
-   plus any `CLOUDWATCH_*`/`NEW_RELIC_*` you use) in Horizon's dashboard —
-   use different values there than in your local `.env`. **Also set
-   `SERVER_HOST=0.0.0.0`** — it defaults to `127.0.0.1` (loopback-only), which
-   would make the app unreachable from Horizon's gateway/proxy even though
-   the process starts and logs success.
-4. Deploy. Horizon's gateway sits in front with its own OAuth 2.1 auth
-   (mandatory on the free tier, enforced before requests reach this code) and
-   gives you a stable production URL ending in `/mcp`.
-
-Notes:
-- Because Horizon's gateway enforces its own OAuth in front, wiring up a
-  client (Cursor/Claude Desktop) may follow Horizon's own auth flow rather
-  than the static `Authorization: Bearer <MCP_AUTH_TOKEN>` header shown
-  above — check Horizon's client-connection docs for the exact shape.
-- Verify outbound network access from Horizon's hosted containers to your
-  specific Postgres host, AWS region, and New Relic account before relying
-  on it — this wasn't confirmed in their public docs at the time of writing.
-- Never commit `.env` — it holds real credentials. Set the same variable
-  names directly in Horizon's environment-variable UI instead.
+The streamable-HTTP transport has no authentication of its own, so
+`core/auth.py` adds a bearer-token check (`MCP_AUTH_TOKEN`) — leaving it
+unset while `SERVER_HOST` is non-loopback logs a warning at startup and
+leaves the endpoint open. See [`docs/deployment.md`](docs/deployment.md) for
+the full pre-deploy checklist, environment variable reference, Horizon
+deployment steps, post-deploy verification, and common pitfalls.
 
 ## Tool catalog
 
