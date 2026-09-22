@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 610" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+  </defs>
+
+  <!-- card background so the diagram reads the same on GitHub light + dark theme -->
+  <rect x="0" y="0" width="1000" height="610" rx="16" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.5"/>
+
+  <!-- engineer / MCP client -->
+  <rect x="330" y="28" width="340" height="64" rx="10" fill="#eef2f7" stroke="#334155" stroke-width="1.5"/>
+  <text x="500" y="55" text-anchor="middle" font-size="15" font-weight="600" fill="#1e293b">Engineer, in Cursor / Claude Desktop</text>
+  <text x="500" y="76" text-anchor="middle" font-size="12" fill="#475569">"why did checkout fail for order 88213?"</text>
+
+  <line x1="500" y1="92" x2="500" y2="146" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="512" y="122" font-size="11" fill="#64748b">MCP (streamable HTTP)</text>
+
+  <!-- investigation server -->
+  <rect x="280" y="150" width="440" height="86" rx="10" fill="#0f172a"/>
+  <text x="500" y="182" text-anchor="middle" font-size="17" font-weight="700" fill="#ffffff">Investigation MCP Server</text>
+  <text x="500" y="204" text-anchor="middle" font-size="12" fill="#cbd5e1">read-only tools · guardrail-validated · PII-redacted</text>
+  <text x="500" y="222" text-anchor="middle" font-size="12" fill="#cbd5e1">the client model writes the query; this server only validates + executes it</text>
+
+  <!-- fan-out arrows to the three sources -->
+  <line x1="500" y1="238" x2="170" y2="300" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="500" y1="238" x2="500" y2="300" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="500" y1="238" x2="830" y2="300" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- PostgreSQL -->
+  <rect x="30" y="304" width="280" height="152" rx="10" fill="#f8fafc" stroke="#336791" stroke-width="2"/>
+  <circle cx="52" cy="332" r="6" fill="#336791"/>
+  <text x="66" y="337" font-size="16" font-weight="700" fill="#1e293b">PostgreSQL</text>
+  <text x="50" y="364" font-size="12.5" fill="#334155">• Schema discovery (tables, FKs, indexes)</text>
+  <text x="50" y="386" font-size="12.5" fill="#334155">• Validated, read-only SELECT queries</text>
+  <text x="50" y="408" font-size="12.5" fill="#334155">• Sample rows, identifier / store lookup</text>
+  <text x="50" y="430" font-size="12.5" fill="#334155">• PII redaction on every row returned</text>
+
+  <!-- CloudWatch -->
+  <rect x="360" y="304" width="280" height="152" rx="10" fill="#f8fafc" stroke="#ff9900" stroke-width="2"/>
+  <circle cx="382" cy="332" r="6" fill="#ff9900"/>
+  <text x="396" y="337" font-size="16" font-weight="700" fill="#1e293b">AWS CloudWatch</text>
+  <text x="380" y="364" font-size="12.5" fill="#334155">• Log group discovery + field shapes</text>
+  <text x="380" y="386" font-size="12.5" fill="#334155">• Logs Insights queries (cost-capped)</text>
+  <text x="380" y="408" font-size="12.5" fill="#334155">• Trace lookup by request/order id</text>
+  <text x="380" y="430" font-size="12.5" fill="#334155">• Metric statistics (latency, error rate)</text>
+
+  <!-- New Relic -->
+  <rect x="690" y="304" width="280" height="152" rx="10" fill="#f8fafc" stroke="#008c99" stroke-width="2"/>
+  <circle cx="712" cy="332" r="6" fill="#008c99"/>
+  <text x="726" y="337" font-size="16" font-weight="700" fill="#1e293b">New Relic</text>
+  <text x="710" y="364" font-size="12.5" fill="#334155">• Event type + log field discovery</text>
+  <text x="710" y="386" font-size="12.5" fill="#334155">• Validated, read-only NRQL queries</text>
+  <text x="710" y="408" font-size="12.5" fill="#334155">• Correlation/trace id detection</text>
+  <text x="710" y="430" font-size="12.5" fill="#334155">• keyset() field grounding</text>
+
+  <!-- synthesis note -->
+  <rect x="30" y="486" width="940" height="94" rx="10" fill="#eef2f7" stroke="#94a3b8" stroke-width="1"/>
+  <text x="500" y="518" text-anchor="middle" font-size="13" font-weight="600" fill="#1e293b">The client model correlates evidence across all three sources itself</text>
+  <text x="500" y="540" text-anchor="middle" font-size="12" fill="#475569">The server never merges DB, CloudWatch and New Relic results — each tool call returns evidence from one</text>
+  <text x="500" y="558" text-anchor="middle" font-size="12" fill="#475569">source; the model fans out, cross-references timestamps/ids, and writes the root-cause summary.</text>
+</svg>

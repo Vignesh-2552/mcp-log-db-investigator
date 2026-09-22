@@ -1,10 +1,17 @@
 # Investigation MCP Server
 
 A [FastMCP](https://gofastmcp.com) server exposing safe, **read-only** tools for
-investigating support tickets: schema discovery + query execution against a
-Postgres database, and log-group discovery + Logs Insights execution
-against CloudWatch. See [`docs/design.md`](docs/design.md) for the
-full design.
+investigating support tickets across three sources: schema discovery + query
+execution against **PostgreSQL**, log/metric access against **AWS CloudWatch**,
+and log/event access against **New Relic** (NRQL). It's driven by a client
+model (Claude Desktop, Cursor) that writes the queries in conversation — the
+server's job is to supply enough grounding context (schema, field discovery,
+a query cookbook) that the model generates correct queries, and to validate +
+execute them safely. See [`docs/design.md`](docs/design.md) for the full design.
+
+## Architecture
+
+![Architecture: MCP client to Investigation MCP Server, fanning out to PostgreSQL, AWS CloudWatch, and New Relic](docs/architecture.svg)
 
 ## Setup
 
@@ -17,20 +24,25 @@ uv run pytest tests/integration -m integration   # requires your Postgres to be 
 uv run investigation-server    # starts the MCP server over HTTP on port 8000
 ```
 
-Edit `.env` and set `DB_URL` to your PostgreSQL connection string
-(e.g. `postgresql+psycopg://user:pass@host:5432/dbname`).
-See `.env.example` for every available variable.
+See `.env.example` for every available variable. Each source is independent —
+you only need to fill in the block for the source(s) you actually want to use;
+the tools for a source you skip will just error at call time instead of
+blocking startup.
 
-The server starts on `http://127.0.0.1:8000/mcp` by default (streamable HTTP
-transport). It does not provide built-in HTTP authentication, so only set
-`SERVER_HOST` to a non-loopback address when access is protected by an
-authenticated proxy or equivalent network control. Adjust `SERVER_PORT` and
-`SERVER_PATH` in `.env` as needed.
+### What each source needs
 
-CloudWatch tools (`cw_*`) call real `boto3`/AWS APIs; set `CLOUDWATCH_REGION`
-(required — there is no `AWS_REGION` fallback), `AWS_PROFILE` (or
-`CLOUDWATCH_ACCESS_KEY_ID`/`CLOUDWATCH_SECRET_ACCESS_KEY`), and
-`CLOUDWATCH_ALLOWED_LOG_GROUP` to use them.
+| Source | Required | Notes |
+|---|---|---|
+| **PostgreSQL** (`db_*` tools) | `DB_URL` | Full connection string, `asyncpg` driver: `postgresql+asyncpg://user:pass@host:5432/dbname`. Point this at a read-only role/replica — see [Security model](#security-model). |
+| **AWS CloudWatch** (`cw_*` tools) | `CLOUDWATCH_REGION` + one of (`AWS_PROFILE`) or (`CLOUDWATCH_ACCESS_KEY_ID` + `CLOUDWATCH_SECRET_ACCESS_KEY`) + `CLOUDWATCH_ALLOWED_LOG_GROUP` | `CLOUDWATCH_REGION` has no `AWS_REGION` fallback — it must be set explicitly. `CLOUDWATCH_ALLOWED_LOG_GROUP` is a comma-separated allowlist; leaving it unset means no log group is queryable. |
+| **New Relic** (`nr_*` tools) | `NEW_RELIC_API_KEY` + `NEW_RELIC_ACCOUNT_ID` | The API key must be a **User API key** (`NRAK-...`), not an ingest/license key. `NEW_RELIC_REGION` defaults to `us`; set it to `eu` for EU-region accounts. |
+
+The server itself (`SERVER_HOST`/`SERVER_PORT`/`SERVER_PATH`) and `PII_REDACTION`
+have working defaults out of the box and don't need to be touched for local use.
+It starts on `http://127.0.0.1:8000/mcp` by default (streamable HTTP transport)
+and has no built-in HTTP authentication, so only set `SERVER_HOST` to a
+non-loopback address when access is protected by an authenticated proxy or
+equivalent network control.
 
 ## Registering with an MCP client
 
@@ -48,14 +60,6 @@ CloudWatch tools (`cw_*`) call real `boto3`/AWS APIs; set `CLOUDWATCH_REGION`
 ```
 
 **Claude Desktop** — same shape in `claude_desktop_config.json`.
-
-## Deploying
-
-The streamable-HTTP transport has no authentication of its own. Horizon's
-OAuth 2.1 gateway provides authentication before requests reach the server.
-For any other hosting setup, place the server behind an authenticated proxy
-or equivalent network control. See [`docs/deployment.md`](docs/deployment.md)
-for the full deployment checklist and verification steps.
 
 ## Tool catalog
 
