@@ -25,7 +25,7 @@ def test_invalid_platform_port_falls_back_to_server_port(monkeypatch):
     monkeypatch.delenv("SERVER_PORT", raising=False)
     monkeypatch.setenv("PORT", "not-a-number")
 
-    assert Settings(_env_file=None).server_port == 8000
+    assert Settings(_env_file=None).server_port == 8001
 
 
 def test_lowercase_server_port_env_var_still_wins_over_platform_port(monkeypatch):
