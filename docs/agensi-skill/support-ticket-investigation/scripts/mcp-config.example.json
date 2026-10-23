@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "investigation": {
+      "url": "http://127.0.0.1:8001/mcp",
+      "headers": { "Authorization": "Bearer <YOUR_SHARED_SECRET_IF_ENABLED>" }
+    }
+  }
+}
