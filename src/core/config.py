@@ -1,6 +1,7 @@
 import logging
 import os
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -53,6 +54,9 @@ class Settings(BaseSettings):
     server_host: str = "127.0.0.1"
     server_port: int = 8001
     server_path: str = "/mcp"
+    # Unset → each entry point's default: `investigation-server` serves HTTP
+    # (Docker/hosted), `opsinsight-mcp` speaks stdio (launched by the client via uvx).
+    mcp_transport: Literal["streamable-http", "stdio"] | None = None
     pii_redaction: bool = True
     log_level: str = "INFO"
     log_format: str = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
