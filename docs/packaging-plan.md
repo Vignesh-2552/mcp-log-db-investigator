@@ -144,9 +144,10 @@ Decided:
 - [x] PyPI package name: `opsinsight-mcp`.
 - [x] Python floor: `>=3.11`.
 
+- [x] Publishing: tag-triggered GitHub Action with PyPI trusted publishing (`.github/workflows/publish.yml`). Pushing `vX.Y.Z` lints, tests, checks the tag matches `pyproject.toml`'s version, builds, and publishes. Requires a one-time trusted-publisher registration on PyPI (owner `Vignesh-2552`, repo `mcp-log-db-investigator`, workflow `publish.yml`, environment `pypi`).
+
 Open decisions:
 
-- [ ] PyPI account and token for `uv publish`, or a tag-triggered GitHub Action with trusted publishing.
 - [ ] The wheel installs generic top-level modules (`core`, `tools`, `service`, `data`, ...). Fine under `uvx` (isolated env) but can clash in a shared `pip` env. Moving them under an `opsinsight/` package fixes it; it touches every import.
 - [ ] Add a `docker-compose.yml` for the Docker path.
 - [ ] Whether to offer a hosted shared instance, which needs authentication in front of `/mcp`.

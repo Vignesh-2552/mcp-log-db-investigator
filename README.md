@@ -64,9 +64,43 @@ no composite "investigate this ticket end-to-end" tool yet (see
 
 ## Quick Start
 
-### Prerequisites
+### Fastest: run the published package with `uvx`
 
-- Python 3.13+
+No clone, no Docker, no port. Install [`uv`](https://docs.astral.sh/uv/getting-started/installation/),
+then add this to your MCP client config (Claude Desktop `claude_desktop_config.json`,
+Cursor `.cursor/mcp.json`). The client launches the server itself over stdio, and
+`uvx` downloads and caches the package on first run:
+
+```json
+{
+  "mcpServers": {
+    "investigation": {
+      "command": "uvx",
+      "args": ["opsinsight-mcp"],
+      "env": {
+        "DB_URL": "postgresql+asyncpg://readonly_user:pass@host:5432/dbname",
+        "CLOUDWATCH_REGION": "ap-south-1",
+        "CLOUDWATCH_ACCESS_KEY_ID": "...",
+        "CLOUDWATCH_SECRET_ACCESS_KEY": "...",
+        "CLOUDWATCH_ALLOWED_LOG_GROUP": "/app/prod",
+        "NEW_RELIC_API_KEY": "NRAK-...",
+        "NEW_RELIC_ACCOUNT_ID": "..."
+      }
+    }
+  }
+}
+```
+
+Claude Code: `claude mcp add -e DB_URL=... investigation -- uvx opsinsight-mcp`.
+
+Only set the variables for the sources you use (see
+[What each source needs](#what-each-source-needs)). In this mode there is no
+`.env` file — the `env` block is the configuration. To run an unreleased version
+straight from GitHub, use `"args": ["--from", "git+https://github.com/Vignesh-2552/mcp-log-db-investigator", "opsinsight-mcp"]`.
+
+### Prerequisites (running from source)
+
+- Python 3.11+
 - [`uv`](https://docs.astral.sh/uv/getting-started/installation/)
 - Access credentials for whichever source(s) you want to use — see
   [What each source needs](#what-each-source-needs) below. You don't need
@@ -82,25 +116,32 @@ copy .env.example .env
 uv run investigation-server
 ```
 
-The server starts on `http://127.0.0.1:8000/mcp` by default (streamable HTTP
-transport). It has no built-in HTTP authentication, so only set `SERVER_HOST`
+The server starts on `http://127.0.0.1:8001/mcp` by default (streamable HTTP
+transport; change it with `SERVER_PORT`). It has no built-in HTTP authentication, so only set `SERVER_HOST`
 to a non-loopback address when access is protected by an authenticated proxy
 or equivalent network control.
 
 ### Docker
 
-If you'd rather not install Python/`uv` locally, build and run the image
-instead:
+For a long-running HTTP server (shared by a team, or on a server host), run the
+image published to GHCR on every merge to `main`:
 
 ```powershell
-docker build -t investigation-mcp .
-docker run --rm -p 8000:8000 --env-file .env -e SERVER_HOST=0.0.0.0 investigation-mcp
+docker run --rm -p 127.0.0.1:8000:8000 --env-file .env -e SERVER_HOST=0.0.0.0 -e SERVER_PORT=8000 ghcr.io/vignesh-2552/mcp-log-db-investigator:latest
 ```
 
-Two things differ from the local (`uv run`) path:
+Then point the client at `http://localhost:8000/mcp`. To build the image
+yourself instead: `docker build -t investigation-mcp .` and use
+`investigation-mcp` as the image name.
+
+Three things differ from the local (`uv run`) path:
 
 - `SERVER_HOST` must be overridden to `0.0.0.0` — the default `127.0.0.1`
   would only be reachable from inside the container.
+- `SERVER_PORT` must match the container side of `-p` (`8000` above). The app
+  default and `.env.example` both use `8001`; `-e` overrides the `.env` value.
+- Use `host.docker.internal` instead of `localhost` in `DB_URL` for a database
+  running on your own machine.
 - `AWS_PROFILE` won't work (there's no local AWS config file inside the
   image) — use `CLOUDWATCH_ACCESS_KEY_ID`/`CLOUDWATCH_SECRET_ACCESS_KEY`
   in `.env` instead if you need CloudWatch tools.
@@ -125,7 +166,7 @@ See `.env.example` for every available variable, including tuning knobs
   "mcpServers": {
     "investigation": {
       "type": "http",
-      "url": "http://localhost:8000/mcp"
+      "url": "http://localhost:8001/mcp"
     }
   }
 }
