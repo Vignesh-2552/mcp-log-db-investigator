@@ -18,3 +18,9 @@ audit.jsonl
 .cursor/
 .vscode/
 
+
+# Tool caches / scratch output
+.pytest_cache/
+.ruff_cache/
+.uv-cache/
+dist_review/

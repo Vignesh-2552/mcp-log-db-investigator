@@ -1,10 +1,12 @@
 <div align="center">
 
+<img src="docs/assets/logo-512.png" alt="opsinsight-mcp logo" width="120">
+
 # Investigation MCP Server
 
 [![CI](https://github.com/Vignesh-2552/mcp-log-db-investigator/actions/workflows/ci.yml/badge.svg)](https://github.com/Vignesh-2552/mcp-log-db-investigator/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-![Python 3.13+](https://img.shields.io/badge/python-3.13%2B-blue)
+![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)
 ![Read-only](https://img.shields.io/badge/access-read--only-brightgreen)
 ![MCP](https://img.shields.io/badge/protocol-MCP-orange)
 
@@ -47,7 +49,7 @@ Features include:
 
 The server does **not** generate queries itself. The client model (Claude
 Desktop, Cursor) writes the query, using schema/field-discovery tools and a
-curated [query cookbook](src/data/query_cookbook.yaml) this server exposes as
+curated [query cookbook](src/opsinsight/data/query_cookbook.yaml) this server exposes as
 grounding context — the server's job is to make sure the model has enough
 context to write a *correct* query, and to validate + execute whatever it
 writes safely. See [`docs/design.md`](docs/design.md) (§3.1) for the full
@@ -60,7 +62,7 @@ no composite "investigate this ticket end-to-end" tool yet (see
 
 ## Architecture
 
-![Architecture: MCP client to Investigation MCP Server, fanning out to PostgreSQL, AWS CloudWatch, and New Relic](docs/architecture.svg)
+![Architecture: MCP client to Investigation MCP Server, fanning out to PostgreSQL, AWS CloudWatch, and New Relic](docs/assets/architecture.svg)
 
 ## Quick Start
 

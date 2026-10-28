@@ -38,13 +38,16 @@ uv run investigation-server                      # start the MCP server (streama
 
 ## Architecture
 
+All code lives in the `opsinsight` package under `src/opsinsight/` (imports are `from opsinsight.<module> ...`).
+Paths below without a `src/` prefix are relative to that package directory.
+
 **Layering is strict and one-directional**: `tools/*` (thin `@mcp.tool()`-decorated wrappers)
 → `service/*` (business logic, one class per source) → `integrations/<source>/guardrail.py`
 (validate/reject, pure functions, no I/O) → `integrations/<source>/client.py` or `engine.py`
 (actual network/DB I/O). Guardrail functions never touch the network; service methods never
 build a query without passing it through the guardrail first.
 
-**`src/service/` holds one class per source** — `DatabaseService`, `CloudWatchService`,
+**`src/opsinsight/service/` holds one class per source** — `DatabaseService`, `CloudWatchService`,
 `NewRelicService` (`service/database_service.py`, `service/cloudwatch_service.py`,
 `service/newrelic_service.py`), all inheriting `BaseService` (`service/base.py`) for the
 shared `Settings` handle and the `ok(data, meta)` success-envelope helper. This is where a
@@ -106,18 +109,18 @@ grounding step is the main cause of queries that silently return zero rows becau
 name was guessed wrong.
 
 **`core/app.py` holds the single shared `mcp = FastMCP(...)` instance in its own module**,
-imported by every tool/resource/prompt module as `from core.app import mcp`. This exists
+imported by every tool/resource/prompt module as `from opsinsight.core.app import mcp`. This exists
 specifically so `server.py` (which is also the entry point run via `-m`/`investigation-server`)
 never gets circularly imported — see the comment in `core/app.py` if touching this.
 
-**Registration is import-side-effect based**: `src/tools/__init__.py` imports the three
+**Registration is import-side-effect based**: `src/opsinsight/tools/__init__.py` imports the three
 source packages (`cloudwatch`, `database`, `newrelic`); each package's own `__init__.py` in
 turn imports every tool file in it purely for the `@mcp.tool()` decorator to run, and
-re-exports the tool function so it can also be imported as `from tools.<source> import
-<tool_name>`. `src/resources/__init__.py` does the same for `@mcp.resource()`. `server.py`
+re-exports the tool function so it can also be imported as `from opsinsight.tools.<source> import
+<tool_name>`. `src/opsinsight/resources/__init__.py` does the same for `@mcp.resource()`. `server.py`
 imports both top-level `__init__` modules before calling `mcp.run()`. A new tool file must be
 added to its source package's `__init__.py` import list (and, transitively, the source
-package must already be listed in `src/tools/__init__.py`) or it will never register.
+package must already be listed in `src/opsinsight/tools/__init__.py`) or it will never register.
 
 **Errors are structured and self-correcting by design**: every guardrail raises a `ToolError`
 subclass (`GuardrailError`, `CWGuardrailError`, `NewRelicGuardrailError` in `core/errors.py`)
@@ -142,7 +145,7 @@ needs a fake client/network call in tests.
 Every tool that returns rows/log content calls `redact_rows`/`redact_log_event` right before
 building its response — do the same in new tools rather than relying on upstream masking.
 
-**The query cookbook (`src/data/query_cookbook.yaml`, exposed as the `docs://query-cookbook`
+**The query cookbook (`src/opsinsight/data/query_cookbook.yaml`, exposed as the `docs://query-cookbook`
 resource) is a deliberate accuracy lever**, not just documentation — per design doc §4.4,
 giving the client model curated example queries measurably improves generation accuracy over
 schema alone. When a query pattern proves useful or a source's field-naming quirk causes

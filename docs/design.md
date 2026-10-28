@@ -109,10 +109,10 @@ tools/*  →  service/*  →  integrations/<source>/guardrail.py  →  integrati
 
 | Layer | Role | Rule |
 |---|---|---|
-| `src/tools/<source>/` | Thin `@mcp.tool()` wrappers | One file per tool, named after the tool. Docstring + parameter schema + one call into the source's service. No business logic. |
-| `src/service/` | Business logic | One class per source (`DatabaseService`, `CloudWatchService`, `NewRelicService`), all inheriting `BaseService` for `Settings` and the `ok(data, meta)` envelope. Validate → execute → redact → structured response. |
-| `src/integrations/<source>/guardrail.py` | Validate / reject | Pure functions, no I/O. Service methods never execute a user-supplied query without passing it through the guardrail first. |
-| `src/integrations/<source>/client.py` or `engine.py` | Network / DB I/O | SQLAlchemy+asyncpg, boto3, httpx NerdGraph. |
+| `src/opsinsight/tools/<source>/` | Thin `@mcp.tool()` wrappers | One file per tool, named after the tool. Docstring + parameter schema + one call into the source's service. No business logic. |
+| `src/opsinsight/service/` | Business logic | One class per source (`DatabaseService`, `CloudWatchService`, `NewRelicService`), all inheriting `BaseService` for `Settings` and the `ok(data, meta)` envelope. Validate → execute → redact → structured response. |
+| `src/opsinsight/integrations/<source>/guardrail.py` | Validate / reject | Pure functions, no I/O. Service methods never execute a user-supplied query without passing it through the guardrail first. |
+| `src/opsinsight/integrations/<source>/client.py` or `engine.py` | Network / DB I/O | SQLAlchemy+asyncpg, boto3, httpx NerdGraph. |
 
 **Inventory tools are the one deliberate exception to "every query goes through the guardrail":** `db_list_tables`, `cw_list_log_groups`, and `nr_list_event_types` send a hardcoded, parameter-free (or window-clamped) query straight to the client, because there is no user-supplied query text to validate. `nr_list_event_types` in particular sends `SHOW EVENT TYPES`, which isn't a `SELECT` and would otherwise be rejected by `validate_nrql`.
 
@@ -122,13 +122,13 @@ Network/DB clients are **constructor-injected** on `CloudWatchService` (`logs_cl
 
 ### 3.3 Composition Root and Registration
 
-`src/core/container.py` is the composition root — the one place that constructs services and wires their dependencies. `Container` lazily builds and caches (singleton-scoped, per container instance) `database_service` / `cloudwatch_service` / `newrelic_service`. Tools call `get_container().database_service.list_tables(...)`. Tests that want an isolated object graph construct their own `Container`; `reset_container()` drops the process-wide singleton so the next `get_container()` rebuilds against current `Settings`.
+`src/opsinsight/core/container.py` is the composition root — the one place that constructs services and wires their dependencies. `Container` lazily builds and caches (singleton-scoped, per container instance) `database_service` / `cloudwatch_service` / `newrelic_service`. Tools call `get_container().database_service.list_tables(...)`. Tests that want an isolated object graph construct their own `Container`; `reset_container()` drops the process-wide singleton so the next `get_container()` rebuilds against current `Settings`.
 
-`src/core/app.py` holds the single shared `mcp = FastMCP("investigation-server")` instance. It lives in its own module so `server.py` (the entry point run via `investigation-server` / `-m`) never gets circularly imported.
+`src/opsinsight/core/app.py` holds the single shared `mcp = FastMCP("investigation-server")` instance. It lives in its own module so `server.py` (the entry point run via `investigation-server` / `-m`) never gets circularly imported.
 
-Registration is import-side-effect based: `src/tools/__init__.py` imports the three source packages; each package's `__init__.py` imports every tool file so the `@mcp.tool()` decorator runs. `src/resources/__init__.py` does the same for `@mcp.resource()`. `server.py` imports both top-level packages before `mcp.run()`. A new tool file must be added to its source package's `__init__.py` or it will never register.
+Registration is import-side-effect based: `src/opsinsight/tools/__init__.py` imports the three source packages; each package's `__init__.py` imports every tool file so the `@mcp.tool()` decorator runs. `src/opsinsight/resources/__init__.py` does the same for `@mcp.resource()`. `server.py` imports both top-level packages before `mcp.run()`. A new tool file must be added to its source package's `__init__.py` or it will never register.
 
-Settings are one `pydantic-settings` object (`src/core/config.py`), loaded once via `@lru_cache def get_settings()`. Tests that change env vars must call `get_settings.cache_clear()` (and, for DB tests, `await reset_engine()`).
+Settings are one `pydantic-settings` object (`src/opsinsight/core/config.py`), loaded once via `@lru_cache def get_settings()`. Tests that change env vars must call `get_settings.cache_clear()` (and, for DB tests, `await reset_engine()`).
 
 ## 4. Tool Catalog
 
@@ -174,7 +174,7 @@ Read-only context the client can pull without a tool call:
 - `schema://db/tables` — compact JSON dump of every table
 - `schema://db/table/{name}` — single table detail
 - `logs://groups` — log group inventory (reuses `cw_list_log_groups`)
-- `docs://query-cookbook` — curated example queries (SQL + Logs Insights + NRQL) from `src/data/query_cookbook.yaml`
+- `docs://query-cookbook` — curated example queries (SQL + Logs Insights + NRQL) from `src/opsinsight/data/query_cookbook.yaml`
 
 The **query cookbook** is a deliberate accuracy lever, not just documentation: giving the client model curated example queries measurably improves generation accuracy over schema alone. When a query pattern proves useful or a source's field-naming quirk causes repeated bad queries, add/update a cookbook entry rather than only fixing it in prose.
 
@@ -443,7 +443,8 @@ Weekly review of tool usage and guardrail rejections to improve the cookbook rem
 ## Appendix A: Package Map
 
 ```
-src/
+src/opsinsight/
+  __init__.py               # package version (__version__)
   server.py                 # entry points: opsinsight-mcp (stdio), investigation-server (HTTP)
   core/
     app.py                  # shared FastMCP instance
@@ -465,4 +466,4 @@ src/
 
 ## Appendix B: Query Cookbook
 
-The live cookbook is `src/data/query_cookbook.yaml`, exposed as `docs://query-cookbook`. It currently covers SQL (failed orders, identifier lookup, store resolution, joins), Logs Insights (trace by order/request id, error rate, latency), and NRQL (`keyset()`, trace by order/request id, error facets). Prefer calling the convenience tools (`db_resolve_store`, `cw_get_trace_events`, `nr_describe_log_fields`) over hand-writing the equivalent query when the tool covers the case.
+The live cookbook is `src/opsinsight/data/query_cookbook.yaml`, exposed as `docs://query-cookbook`. It currently covers SQL (failed orders, identifier lookup, store resolution, joins), Logs Insights (trace by order/request id, error rate, latency), and NRQL (`keyset()`, trace by order/request id, error facets). Prefer calling the convenience tools (`db_resolve_store`, `cw_get_trace_events`, `nr_describe_log_fields`) over hand-writing the equivalent query when the tool covers the case.

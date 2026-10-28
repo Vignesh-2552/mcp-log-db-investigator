@@ -45,7 +45,7 @@ this repo's layering (`tools/* → service/* → integrations/<source>/guardrail
 - **Guardrails are pure functions, no I/O.** A service method never executes
   a user-supplied query without passing it through the guardrail first.
 - **A new tool file must be registered** in its source package's `__init__.py`
-  (see `src/tools/database/__init__.py` etc.) or it silently never loads.
+  (see `src/opsinsight/tools/database/__init__.py` etc.) or it silently never loads.
 - **Errors are structured**, not bare rejections — every guardrail raises a
   `ToolError` subclass with a machine-readable `rule` and a `detail` string
   explaining what to change, so the calling model can self-correct.
@@ -64,7 +64,7 @@ follow the same pattern for new commits.
 
 If a query pattern proves useful, or a source's field-naming quirk causes
 repeated bad queries from the client model, add/update an entry in
-[`src/data/query_cookbook.yaml`](src/data/query_cookbook.yaml) rather than
+[`src/opsinsight/data/query_cookbook.yaml`](src/opsinsight/data/query_cookbook.yaml) rather than
 only fixing it in prose — see `CLAUDE.md` for why this matters more than it
 looks like it should.
 

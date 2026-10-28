@@ -3,8 +3,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from core.config import get_settings
-from service.cloudwatch_service import CloudWatchService
+from opsinsight.core.config import get_settings
+from opsinsight.service.cloudwatch_service import CloudWatchService
 
 LOG_GROUP = "/aws/ecs/test-svc"
 

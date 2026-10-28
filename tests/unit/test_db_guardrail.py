@@ -1,7 +1,7 @@
 import pytest
 
-from core.errors import GuardrailError
-from integrations.database.guardrail import (
+from opsinsight.core.errors import GuardrailError
+from opsinsight.integrations.database.guardrail import (
     truncate_cell,
     validate_sql,
 )

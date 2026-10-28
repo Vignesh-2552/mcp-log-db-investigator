@@ -5,9 +5,9 @@ import pytest
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from core.config import get_settings
-from core.container import reset_container
-from integrations.database.engine import reset_engine
+from opsinsight.core.config import get_settings
+from opsinsight.core.container import reset_container
+from opsinsight.integrations.database.engine import reset_engine
 
 
 @pytest.fixture

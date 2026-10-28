@@ -1,7 +1,7 @@
 import pytest
 
-from core.config import get_settings
-from service.database_service import DatabaseService
+from opsinsight.core.config import get_settings
+from opsinsight.service.database_service import DatabaseService
 
 pytestmark = pytest.mark.integration
 

@@ -4,6 +4,18 @@ All notable changes to `opsinsight-mcp` are listed here. Versions follow
 [Semantic Versioning](https://semver.org/). A version number can be published
 to PyPI only once, so every release gets a new number.
 
+## [Unreleased]
+
+### Changed
+- All code moved into the `opsinsight` package (`src/opsinsight/`). The wheel now
+  installs one top-level package instead of generic modules (`core`, `tools`,
+  `service`, `data`, ...) that could clash in a shared environment. The
+  `opsinsight-mcp` and `investigation-server` commands are unchanged.
+- Images moved to `docs/assets/`; the README shows the logo. Removed duplicate
+  logo formats and the completed `docs/packaging-plan.md` (superseded by this
+  changelog and `docs/roadmap.md`).
+- `.python-version` set to 3.13 to match CI and the Docker image.
+
 ## [0.1.1] - 2026-10-28
 
 ### Fixed

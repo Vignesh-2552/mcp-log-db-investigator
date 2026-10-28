@@ -1,4 +1,4 @@
-from integrations.database.introspect import (
+from opsinsight.integrations.database.introspect import (
     _domain_search_variants,
     _entity_name_candidates,
     _is_historical_schema,

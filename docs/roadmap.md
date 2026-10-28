@@ -26,7 +26,7 @@ Small fixes that remove friction for every new user. Ship them together as 0.1.1
 
 | # | Item | Why | Where |
 |---|---|---|---|
-| 0.1 | Non-numeric `NEW_RELIC_ACCOUNT_ID` raises a raw `ValueError` instead of a structured error | Users who leave the placeholder from the example config hit an unhelpful crash | `src/integrations/newrelic/client.py:32`; validate in `Settings` or the service |
+| 0.1 | Non-numeric `NEW_RELIC_ACCOUNT_ID` raises a raw `ValueError` instead of a structured error | Users who leave the placeholder from the example config hit an unhelpful crash | `src/opsinsight/integrations/newrelic/client.py:32`; validate in `Settings` or the service |
 | 0.2 | Add `[project.urls]` (Homepage, Repository, Issues) | The PyPI page has no links back to GitHub; it also helps search ranking | `pyproject.toml` |
 | 0.3 | Set `ENV SERVER_HOST=0.0.0.0 SERVER_PORT=8000` in the Dockerfile | Today every `docker run` needs `-e` overrides, or the port mapping silently fails (app default is 8001) | `Dockerfile`, README |
 | 0.4 | Update `docs/design.md` | It still says Python 3.13+, HTTP-only on `:8000`; stdio and uvx are missing | `docs/design.md` §3, §7, §12 |

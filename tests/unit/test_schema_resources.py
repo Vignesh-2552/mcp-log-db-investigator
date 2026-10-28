@@ -1,7 +1,11 @@
 import json
 
-from integrations.database.models import Column, TableDescription, TableSummary
-from resources import schema
+from opsinsight.integrations.database.models import (
+    Column,
+    TableDescription,
+    TableSummary,
+)
+from opsinsight.resources import schema
 
 
 async def test_schema_all_tables_serializes_models_as_objects(monkeypatch):

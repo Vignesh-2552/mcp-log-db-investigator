@@ -1,5 +1,5 @@
-from core.config import Settings
-from core.redaction import redact_log_event, redact_row, redact_text
+from opsinsight.core.config import Settings
+from opsinsight.core.redaction import redact_log_event, redact_row, redact_text
 
 _ENABLED = Settings(pii_redaction=True)
 _DISABLED = Settings(pii_redaction=False)

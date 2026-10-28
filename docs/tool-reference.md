@@ -79,8 +79,8 @@ Success output:
 
 Implementation:
 
-- Tool: `src/tools/database/db_list_tables.py`
-- Logic: `src/integrations/database/introspect.py`
+- Tool: `src/opsinsight/tools/database/db_list_tables.py`
+- Logic: `src/opsinsight/integrations/database/introspect.py`
 - Cached for about 10 minutes.
 
 ### `db_describe_table`
@@ -831,15 +831,15 @@ Resources are read-only context. They are not tools.
 | `schema://db/tables` | Compact JSON list of database tables. |
 | `schema://db/table/{name}` | Detailed schema for one table. |
 | `logs://groups` | CloudWatch log group inventory. |
-| `docs://query-cookbook` | Markdown query cookbook generated from `src/data/query_cookbook.yaml`. |
+| `docs://query-cookbook` | Markdown query cookbook generated from `src/opsinsight/data/query_cookbook.yaml`. |
 
 ## How To Update A Tool
 
 Follow this flow when changing or adding a tool.
 
-1. Add or update the MCP tool wrapper in `src/tools/`.
-2. Put external service logic in `src/integrations/<service>/`.
-3. Put safety checks in `src/integrations/<service>/guardrail.py`.
+1. Add or update the MCP tool wrapper in `src/opsinsight/tools/`.
+2. Put external service logic in `src/opsinsight/integrations/<service>/`.
+3. Put safety checks in `src/opsinsight/integrations/<service>/guardrail.py`.
 4. Return the common response shape: `{"ok": true, "data": ..., "meta": ...}`.
 5. Return structured errors by catching `ToolError` and calling `to_response()`.
 6. Redact sensitive output before returning rows or log messages.

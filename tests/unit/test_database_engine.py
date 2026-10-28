@@ -1,7 +1,7 @@
 from unittest.mock import Mock, patch
 
-from core.config import Settings
-from integrations.database import engine as engine_module
+from opsinsight.core.config import Settings
+from opsinsight.integrations.database import engine as engine_module
 
 
 def test_engine_log_masks_database_password(caplog):

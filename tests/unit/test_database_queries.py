@@ -1,4 +1,4 @@
-from integrations.database.queries import build_sample_rows_sql
+from opsinsight.integrations.database.queries import build_sample_rows_sql
 
 
 def test_sample_rows_quotes_schema_and_table_identifiers():
