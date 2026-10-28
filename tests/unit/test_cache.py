@@ -1,4 +1,4 @@
-from core.cache import ttl_cache
+from opsinsight.core.cache import ttl_cache
 
 
 async def test_ttl_cache_uses_updated_ttl_provider_value():

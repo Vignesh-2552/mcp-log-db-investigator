@@ -2,8 +2,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from core.errors import CWGuardrailError
-from integrations.cloudwatch.guardrail import (
+from opsinsight.core.errors import CWGuardrailError
+from opsinsight.integrations.cloudwatch.guardrail import (
     build_trace_filter_value,
     check_bytes_scanned,
     clamp_window,

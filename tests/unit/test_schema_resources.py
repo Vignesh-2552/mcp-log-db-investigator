@@ -1,7 +1,11 @@
 import json
 
-from integrations.database.models import Column, TableDescription, TableSummary
-from resources import schema
+from opsinsight.integrations.database.models import (
+    Column,
+    TableDescription,
+    TableSummary,
+)
+from opsinsight.resources import schema
 
 
 async def test_schema_all_tables_serializes_models_as_objects(monkeypatch):
@@ -35,3 +39,18 @@ async def test_schema_table_detail_serializes_nested_models_as_objects(monkeypat
     assert payload["columns"] == [
         {"name": "id", "type": "integer", "nullable": False, "default": None}
     ]
+
+
+async def test_schema_all_tables_returns_structured_error_when_db_fails(monkeypatch):
+    from sqlalchemy.exc import OperationalError
+
+    async def list_tables(_schema):
+        raise OperationalError("SELECT 1", {}, Exception("connection refused"))
+
+    monkeypatch.setattr(schema.introspect, "list_tables", list_tables)
+
+    payload = json.loads(await schema.schema_all_tables())
+
+    assert payload["ok"] is False
+    assert payload["error"]["rule"] == "query_execution_error"
+    assert "connection refused" in payload["error"]["detail"]

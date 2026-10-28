@@ -109,10 +109,10 @@ tools/*  →  service/*  →  integrations/<source>/guardrail.py  →  integrati
 
 | Layer | Role | Rule |
 |---|---|---|
-| `src/tools/<source>/` | Thin `@mcp.tool()` wrappers | One file per tool, named after the tool. Docstring + parameter schema + one call into the source's service. No business logic. |
-| `src/service/` | Business logic | One class per source (`DatabaseService`, `CloudWatchService`, `NewRelicService`), all inheriting `BaseService` for `Settings` and the `ok(data, meta)` envelope. Validate → execute → redact → structured response. |
-| `src/integrations/<source>/guardrail.py` | Validate / reject | Pure functions, no I/O. Service methods never execute a user-supplied query without passing it through the guardrail first. |
-| `src/integrations/<source>/client.py` or `engine.py` | Network / DB I/O | SQLAlchemy+asyncpg, boto3, httpx NerdGraph. |
+| `src/opsinsight/tools/<source>/` | Thin `@mcp.tool()` wrappers | One file per tool, named after the tool. Docstring + parameter schema + one call into the source's service. No business logic. |
+| `src/opsinsight/service/` | Business logic | One class per source (`DatabaseService`, `CloudWatchService`, `NewRelicService`), all inheriting `BaseService` for `Settings` and the `ok(data, meta)` envelope. Validate → execute → redact → structured response. |
+| `src/opsinsight/integrations/<source>/guardrail.py` | Validate / reject | Pure functions, no I/O. Service methods never execute a user-supplied query without passing it through the guardrail first. |
+| `src/opsinsight/integrations/<source>/client.py` or `engine.py` | Network / DB I/O | SQLAlchemy+asyncpg, boto3, httpx NerdGraph. |
 
 **Inventory tools are the one deliberate exception to "every query goes through the guardrail":** `db_list_tables`, `cw_list_log_groups`, and `nr_list_event_types` send a hardcoded, parameter-free (or window-clamped) query straight to the client, because there is no user-supplied query text to validate. `nr_list_event_types` in particular sends `SHOW EVENT TYPES`, which isn't a `SELECT` and would otherwise be rejected by `validate_nrql`.
 
@@ -122,13 +122,13 @@ Network/DB clients are **constructor-injected** on `CloudWatchService` (`logs_cl
 
 ### 3.3 Composition Root and Registration
 
-`src/core/container.py` is the composition root — the one place that constructs services and wires their dependencies. `Container` lazily builds and caches (singleton-scoped, per container instance) `database_service` / `cloudwatch_service` / `newrelic_service`. Tools call `get_container().database_service.list_tables(...)`. Tests that want an isolated object graph construct their own `Container`; `reset_container()` drops the process-wide singleton so the next `get_container()` rebuilds against current `Settings`.
+`src/opsinsight/core/container.py` is the composition root — the one place that constructs services and wires their dependencies. `Container` lazily builds and caches (singleton-scoped, per container instance) `database_service` / `cloudwatch_service` / `newrelic_service`. Tools call `get_container().database_service.list_tables(...)`. Tests that want an isolated object graph construct their own `Container`; `reset_container()` drops the process-wide singleton so the next `get_container()` rebuilds against current `Settings`.
 
-`src/core/app.py` holds the single shared `mcp = FastMCP("investigation-server")` instance. It lives in its own module so `server.py` (the entry point run via `investigation-server` / `-m`) never gets circularly imported.
+`src/opsinsight/core/app.py` holds the single shared `mcp = FastMCP("investigation-server")` instance. It lives in its own module so `server.py` (the entry point run via `investigation-server` / `-m`) never gets circularly imported.
 
-Registration is import-side-effect based: `src/tools/__init__.py` imports the three source packages; each package's `__init__.py` imports every tool file so the `@mcp.tool()` decorator runs. `src/resources/__init__.py` does the same for `@mcp.resource()`. `server.py` imports both top-level packages before `mcp.run()`. A new tool file must be added to its source package's `__init__.py` or it will never register.
+Registration is import-side-effect based: `src/opsinsight/tools/__init__.py` imports the three source packages; each package's `__init__.py` imports every tool file so the `@mcp.tool()` decorator runs. `src/opsinsight/resources/__init__.py` does the same for `@mcp.resource()`. `server.py` imports both top-level packages before `mcp.run()`. A new tool file must be added to its source package's `__init__.py` or it will never register.
 
-Settings are one `pydantic-settings` object (`src/core/config.py`), loaded once via `@lru_cache def get_settings()`. Tests that change env vars must call `get_settings.cache_clear()` (and, for DB tests, `await reset_engine()`).
+Settings are one `pydantic-settings` object (`src/opsinsight/core/config.py`), loaded once via `@lru_cache def get_settings()`. Tests that change env vars must call `get_settings.cache_clear()` (and, for DB tests, `await reset_engine()`).
 
 ## 4. Tool Catalog
 
@@ -165,7 +165,7 @@ There is **no application-level table allowlist**. Any table the dedicated read-
 |---|---|---|---|
 | `nr_list_event_types` | `hours: int = 24` | event types with data in the window | `SHOW EVENT TYPES` — bypasses the SELECT-only NRQL guardrail on purpose |
 | `nr_describe_log_fields` | `event_type: str = "Log"`, `hours: int = 1` | `keyset()` fields + likely trace/correlation-id attributes | Grounding tool; guessing NR attribute names is the #1 cause of empty results |
-| `nr_run_nrql_query` | `query: str`, `limit: int = 100` | rows, executed query, NerdGraph metadata | **Validated** — see §6.3. `LIMIT` injected/clamped. |
+| `nr_run_nrql_query` | `query: str`, `limit: int = 100` | rows, executed query, NerdGraph metadata | **Validated** — see §6.3. `LIMIT` injected/clamped; `SINCE`/`UNTIL` window capped. |
 
 ### 4.4 Resources
 
@@ -174,7 +174,7 @@ Read-only context the client can pull without a tool call:
 - `schema://db/tables` — compact JSON dump of every table
 - `schema://db/table/{name}` — single table detail
 - `logs://groups` — log group inventory (reuses `cw_list_log_groups`)
-- `docs://query-cookbook` — curated example queries (SQL + Logs Insights + NRQL) from `src/data/query_cookbook.yaml`
+- `docs://query-cookbook` — curated example queries (SQL + Logs Insights + NRQL) from `src/opsinsight/data/query_cookbook.yaml`
 
 The **query cookbook** is a deliberate accuracy lever, not just documentation: giving the client model curated example queries measurably improves generation accuracy over schema alone. When a query pattern proves useful or a source's field-naming quirk causes repeated bad queries, add/update a cookbook entry rather than only fixing it in prose.
 
@@ -228,7 +228,7 @@ This is the section that must not be compromised — the server has production d
 - **AST validation** before execution using `sqlglot` (`integrations/database/guardrail.py`):
   - Parse the statement. Reject if it fails to parse.
   - Reject if more than one statement (blocks `; DROP TABLE`).
-  - Allow only `SELECT` and `WITH ... SELECT` root nodes.
+  - Allow only `SELECT`, `WITH ... SELECT` and `UNION` / `INTERSECT` / `EXCEPT` of selects as root nodes (every branch goes through the checks below).
   - Reject any node type in the denylist (`INSERT`, `UPDATE`, `DELETE`, `MERGE`, `CREATE`, `DROP`, `ALTER`, `GRANT`, `TRUNCATE`, `COPY`, `Command`).
   - Reject calls to dangerous functions (`pg_read_file`, `pg_read_binary_file`, `pg_ls_dir`, `pg_sleep`, `dblink`, `dblink_connect`, `lo_import`, `lo_export`, `pg_terminate_backend`, `pg_cancel_backend`).
   - CTE aliases are not treated as real tables when collecting referenced table names.
@@ -253,17 +253,20 @@ This is the section that must not be compromised — the server has production d
 
 NRQL has no AST parser comparable to sqlglot, so the guardrail is regex-based (`integrations/newrelic/guardrail.py`):
 
+- String literals and comments are masked before every check, so text inside `'...'` (e.g. `LIKE '%update failed%'`) never trips a rule.
 - Reject empty queries and stacked statements (`;`).
 - Require a leading `SELECT`.
 - Reject write-ish keywords (`DELETE`, `INSERT`, `UPDATE`, `CREATE`, `DROP`, `ALTER`, `GRANT`, `TRUNCATE`).
-- Inject/clamp `LIMIT` to `NR_MAX_ROWS` (default 500).
+- Inject/clamp `LIMIT` to `NR_MAX_ROWS` (default 500); `LIMIT MAX` is clamped too.
+- Cap the `SINCE`/`UNTIL` span at `NR_MAX_WINDOW_HOURS` (default 7 days) and inject `SINCE NR_DEFAULT_WINDOW_HOURS hours ago` (default 24) when there is no `SINCE`. Supported operands: `<n> <unit> ago`, `now`/`today`/`yesterday`, epoch seconds/millis, quoted ISO dates; anything else is rejected (`unsupported_time_range`).
 
 This is a first line of defence, not as rigorous as the SQL guardrail. It is good enough because the NerdGraph `nrql` field itself only accepts queries, not mutations (alert creation etc. go through other GraphQL operations). Credentials: `NEW_RELIC_API_KEY` (user key, `NRAK-...`) + `NEW_RELIC_ACCOUNT_ID`; region `us` or `eu` selects the GraphQL endpoint.
 
 ### 6.4 Data Protection
 
-- **PII redaction** in the response path (`core/redaction.py`), applied at the tool/service boundary, not deeper in the stack: column-name masking (`PII_COLUMN_NAMES`) plus regex patterns (email / card / Aadhaar / PAN / phone) applied to both DB/NRQL row values and raw log message text. UUIDs are protected from the card/Aadhaar patterns so they are not partially redacted. Toggle: `PII_REDACTION` (default on).
-- **No secrets in tool arguments.** Credentials come from environment / AWS profile only.
+- **PII redaction** in the response path (`core/redaction.py`), applied at the tool/service boundary, not deeper in the stack: column-name masking (`PII_COLUMN_NAMES`) plus regex patterns (email / card / Aadhaar / PAN / phone) applied to both DB/NRQL row values and raw log message text. UUIDs and Unix epoch timestamps (10-digit seconds / 13-digit millis starting with `1`) are protected from the card/phone/Aadhaar patterns so they are not redacted. Toggle: `PII_REDACTION` (default on).
+- **Credential redaction.** `key=value` / JSON pairs whose key looks like a secret (`password`, `secret`, `token`, `api_key`, `authorization`, ...), bearer tokens, JWTs, AWS access key ids, New Relic `NRAK-` keys and PEM private keys are masked in text; columns/fields whose name contains a secret-like word are masked whole.
+- **No secrets in tool arguments.** Credentials come from environment / AWS profile only. `DB_URL` and all keys are `SecretStr` in `Settings`.
 - **Server-side logging** to stderr (`core/logging_config.py`). Operational logs capture guardrail decisions and errors so issues can be debugged without exposing sensitive data as tool results. Stderr is used so the stdio transport keeps stdout free for JSON-RPC.
 
 ### 6.5 Human-in-the-Loop
@@ -282,13 +285,16 @@ This is a first line of defence, not as rigorous as the SQL guardrail. It is goo
 | `opsinsight-mcp` | stdio | MCP clients launching the PyPI package via `uvx opsinsight-mcp` (no port, no `.env`; config comes from the client's `env` block) |
 | `investigation-server` | streamable HTTP | Running from source and the Docker image |
 
+HTTP security (`core/transport_security.py`): optional shared bearer token `MCP_AUTH_TOKEN` (constant-time compare, min 32 chars); a non-loopback `SERVER_HOST` refuses to start without it unless `ALLOW_UNAUTHENTICATED_HTTP=true`. Host/Origin validation is always strict (`host_origin_protection=True`), not FastMCP's `"auto"`, which skips the check when the process binds `0.0.0.0` (Docker); `SERVER_ALLOWED_HOSTS` / `SERVER_ALLOWED_ORIGINS` extend the loopback defaults. stdio needs neither: it trusts the local process that launched it.
+
 HTTP defaults: `127.0.0.1:8001/mcp`, overridable via `SERVER_HOST` / `SERVER_PORT` / `SERVER_PATH` (a platform-assigned `$PORT` is used when `SERVER_PORT` is unset). The Docker image sets `SERVER_HOST=0.0.0.0` and `SERVER_PORT=8000`.
 
 | Mode | Transport | Status |
 |---|---|---|
 | Individual user | stdio via `uvx opsinsight-mcp` | **Current** (PyPI) |
 | Local / team laptop | Streamable HTTP | **Current**: `uv run investigation-server` or the GHCR image |
-| Shared team server with OAuth/bearer | Streamable HTTP + auth | Not implemented (see `docs/roadmap.md` Phase 3) |
+| Shared team server, one shared bearer token | Streamable HTTP + `MCP_AUTH_TOKEN` | **Current** |
+| Shared team server with per-user OAuth/JWT and per-tool scopes | Streamable HTTP + IdP | Not implemented (see `docs/roadmap.md` Phase 3) |
 
 ### 7.2 Environment
 
@@ -387,10 +393,12 @@ The quality of the error messages directly determines how well the model self-co
 - Bytes scanned always returned in CloudWatch `meta`.
 - Benign streamable-HTTP client-disconnect noise from the MCP SDK is filtered so it does not look like a server bug.
 
+- **Audit events** (`core/audit.py`, FastMCP middleware): one JSON line per tool call / resource read on the `investigation_server.audit` logger with actor (token client id or `unauthenticated`), tool/URI, redacted + truncated arguments, outcome (`ok` / `rejected` + rule / `exception`), row count, duration and request id. Emitted on every path, including guardrail rejections.
+
 **Not implemented**
 
 - Per-tool metrics (call count, p50/p95 latency, error rate) and dashboards.
-- A dedicated audit log (JSONL / CloudWatch Logs).
+- A dedicated, tamper-evident audit sink (audit events currently share the stderr log stream).
 - Tracking median time-to-root-cause per ticket.
 - Replica lag in `db_run_query` metadata.
 
@@ -443,7 +451,8 @@ Weekly review of tool usage and guardrail rejections to improve the cookbook rem
 ## Appendix A: Package Map
 
 ```
-src/
+src/opsinsight/
+  __init__.py               # package version (__version__)
   server.py                 # entry points: opsinsight-mcp (stdio), investigation-server (HTTP)
   core/
     app.py                  # shared FastMCP instance
@@ -465,4 +474,4 @@ src/
 
 ## Appendix B: Query Cookbook
 
-The live cookbook is `src/data/query_cookbook.yaml`, exposed as `docs://query-cookbook`. It currently covers SQL (failed orders, identifier lookup, store resolution, joins), Logs Insights (trace by order/request id, error rate, latency), and NRQL (`keyset()`, trace by order/request id, error facets). Prefer calling the convenience tools (`db_resolve_store`, `cw_get_trace_events`, `nr_describe_log_fields`) over hand-writing the equivalent query when the tool covers the case.
+The live cookbook is `src/opsinsight/data/query_cookbook.yaml`, exposed as `docs://query-cookbook`. It currently covers SQL (failed orders, identifier lookup, store resolution, joins), Logs Insights (trace by order/request id, error rate, latency), and NRQL (`keyset()`, trace by order/request id, error facets). Prefer calling the convenience tools (`db_resolve_store`, `cw_get_trace_events`, `nr_describe_log_fields`) over hand-writing the equivalent query when the tool covers the case.

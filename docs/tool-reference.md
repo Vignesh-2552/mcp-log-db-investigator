@@ -79,8 +79,8 @@ Success output:
 
 Implementation:
 
-- Tool: `src/tools/database/db_list_tables.py`
-- Logic: `src/integrations/database/introspect.py`
+- Tool: `src/opsinsight/tools/database/db_list_tables.py`
+- Logic: `src/opsinsight/integrations/database/introspect.py`
 - Cached for about 10 minutes.
 
 ### `db_describe_table`
@@ -215,7 +215,7 @@ Success output:
 Guardrails:
 
 - Only one statement is allowed.
-- Only `SELECT` and `WITH ... SELECT` are allowed.
+- Only `SELECT`, `WITH ... SELECT` and `UNION`/`INTERSECT`/`EXCEPT` of selects are allowed.
 - DDL/DML commands are rejected.
 - Dangerous Postgres functions are rejected.
 - A `LIMIT` is injected or clamped.
@@ -258,10 +258,21 @@ Success output:
     "executed_sql": "SELECT id, status FROM public.orders ORDER BY created_at DESC LIMIT 100"
   },
   "meta": {
-    "row_count": 1
+    "row_count": 1,
+    "truncated": false
   }
 }
 ```
+
+Load limits (shared by every row-returning DB tool: `db_run_query`, `db_sample_rows`,
+`db_search_by_identifier`):
+
+- Cells longer than `DB_MAX_CELL_BYTES` are cut.
+- If the rows' total JSON size exceeds `DB_MAX_RESPONSE_BYTES` (default 1 MB), the remaining
+  rows are dropped. `meta.truncated` is then `true` and `meta.truncation_note` says how many
+  rows were returned and how to narrow the query (fewer columns, `GROUP BY`, a tighter `WHERE`).
+- At most `DB_MAX_CONCURRENT_QUERIES` DB tool calls run at once. A call that waits longer than
+  `DB_QUEUE_TIMEOUT_S` for a slot returns `server_busy`, so retry after a few seconds.
 
 Use this for normal database investigation after checking schema with
 `db_describe_table`.
@@ -388,7 +399,8 @@ Important:
 ### `cw_list_log_groups`
 
 Lists CloudWatch log groups visible to the configured AWS credentials,
-filtered by the configured allowlist.
+filtered by the configured allowlist. Returns an empty list (with a `note`) when
+`CLOUDWATCH_ALLOWED_LOG_GROUP` is unset.
 
 Inputs:
 
@@ -542,6 +554,10 @@ Success output:
 
 If the query is still running, the tool returns `status: "Running"` and a
 `query_id`.
+
+Guardrails: log groups must be allowlisted; the `SOURCE` command is rejected
+(`source_command_not_allowed`) so the query text can't pick other log groups;
+queries over 10,000 characters are rejected.
 
 ### `cw_get_trace_events`
 
@@ -819,8 +835,9 @@ Guardrails:
 
 - Query must start with `SELECT`.
 - Multiple statements are rejected.
-- Write-like keywords are rejected.
-- `LIMIT` is injected or clamped.
+- Write-like keywords are rejected (text inside quoted strings is ignored).
+- `LIMIT` is injected or clamped (`LIMIT MAX` included).
+- The `SINCE`/`UNTIL` window is capped at `NR_MAX_WINDOW_HOURS`; with no `SINCE`, `SINCE <NR_DEFAULT_WINDOW_HOURS> hours ago` is added. Use `SINCE <n> minutes|hours|days ago`, `today`/`yesterday`, epoch millis, or a quoted date.
 
 ## MCP Resources
 
@@ -831,15 +848,15 @@ Resources are read-only context. They are not tools.
 | `schema://db/tables` | Compact JSON list of database tables. |
 | `schema://db/table/{name}` | Detailed schema for one table. |
 | `logs://groups` | CloudWatch log group inventory. |
-| `docs://query-cookbook` | Markdown query cookbook generated from `src/data/query_cookbook.yaml`. |
+| `docs://query-cookbook` | Markdown query cookbook generated from `src/opsinsight/data/query_cookbook.yaml`. |
 
 ## How To Update A Tool
 
 Follow this flow when changing or adding a tool.
 
-1. Add or update the MCP tool wrapper in `src/tools/`.
-2. Put external service logic in `src/integrations/<service>/`.
-3. Put safety checks in `src/integrations/<service>/guardrail.py`.
+1. Add or update the MCP tool wrapper in `src/opsinsight/tools/`.
+2. Put external service logic in `src/opsinsight/integrations/<service>/`.
+3. Put safety checks in `src/opsinsight/integrations/<service>/guardrail.py`.
 4. Return the common response shape: `{"ok": true, "data": ..., "meta": ...}`.
 5. Return structured errors by catching `ToolError` and calling `to_response()`.
 6. Redact sensitive output before returning rows or log messages.

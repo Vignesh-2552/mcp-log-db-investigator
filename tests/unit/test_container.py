@@ -1,10 +1,10 @@
 import pytest
 
-from core.config import Settings, get_settings
-from core.container import Container, get_container, reset_container
-from service.cloudwatch_service import CloudWatchService
-from service.database_service import DatabaseService
-from service.newrelic_service import NewRelicService
+from opsinsight.core.config import Settings, get_settings
+from opsinsight.core.container import Container, get_container, reset_container
+from opsinsight.service.cloudwatch_service import CloudWatchService
+from opsinsight.service.database_service import DatabaseService
+from opsinsight.service.newrelic_service import NewRelicService
 
 
 @pytest.fixture(autouse=True)

@@ -1,4 +1,4 @@
-from core.config import Settings
+from opsinsight.core.config import Settings
 
 
 def test_server_binds_to_loopback_by_default(monkeypatch):

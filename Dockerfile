@@ -1,6 +1,7 @@
 FROM python:3.13-slim
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+# Pinned for reproducible builds; Dependabot (docker ecosystem) proposes bumps.
+COPY --from=ghcr.io/astral-sh/uv:0.11.16 /uv /uvx /bin/
 
 WORKDIR /app
 
@@ -22,5 +23,9 @@ ENV SERVER_HOST=0.0.0.0 \
     SERVER_PORT=8000
 
 EXPOSE 8000
+
+# Run as an unprivileged user; the app only reads /app at runtime.
+RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin app
+USER app
 
 CMD ["investigation-server"]

@@ -1,7 +1,7 @@
 import pytest
 
-from core.config import get_settings
-from service.newrelic_service import NewRelicService
+from opsinsight.core.config import get_settings
+from opsinsight.service.newrelic_service import NewRelicService
 
 
 @pytest.fixture(autouse=True)

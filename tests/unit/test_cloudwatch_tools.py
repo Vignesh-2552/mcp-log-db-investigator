@@ -3,8 +3,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from core.config import get_settings
-from service.cloudwatch_service import CloudWatchService
+from opsinsight.core.config import get_settings
+from opsinsight.service.cloudwatch_service import CloudWatchService
 
 LOG_GROUP = "/aws/ecs/test-svc"
 
@@ -204,3 +204,76 @@ def test_get_trace_events_builds_and_executes_query():
     assert result["data"]["value"] == 'has "quote'
     assert 'filter trace_id = "has \\"quote"' in result["data"]["executed_query"]
     assert result["data"]["rows"] == [{"@timestamp": "t1"}]
+
+
+def test_logs_client_is_cached_per_credential_set(monkeypatch: pytest.MonkeyPatch):
+    from unittest.mock import Mock
+
+    from opsinsight.core.config import Settings
+    from opsinsight.integrations.cloudwatch import client as client_module
+
+    monkeypatch.setattr(client_module, "_session", lambda settings: Mock())
+    client_module.reset_clients()
+    mumbai = Settings(_env_file=None, cloudwatch_region="ap-south-1")
+    virginia = Settings(_env_file=None, cloudwatch_region="us-east-1")
+
+    assert client_module.get_logs_client(mumbai) is client_module.get_logs_client(mumbai)
+    assert client_module.get_logs_client(mumbai) is not client_module.get_logs_client(virginia)
+    assert client_module.get_logs_client(mumbai) is not client_module.get_metrics_client(mumbai)
+    client_module.reset_clients()
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "SOURCE logGroups(namePrefix: ['/aws/lambda']) | fields @message",
+        "  source logGroups(class: 'STANDARD') | fields @message",
+        "# comment\nSOURCE logGroups() | fields @message",
+    ],
+)
+def test_run_insights_query_rejects_source_command(query):
+    client = _FakeInsightsClient(results=[], bytes_scanned=0)
+    service = _service_with_logs_client(client)
+    start, end = _window()
+
+    result = service.run_insights_query([LOG_GROUP], query, start, end, 100, False)
+
+    assert result["ok"] is False
+    assert result["error"]["rule"] == "source_command_not_allowed"
+
+
+def test_run_insights_query_allows_source_word_inside_filter():
+    client = _FakeInsightsClient(results=[], bytes_scanned=0)
+    service = _service_with_logs_client(client)
+    start, end = _window()
+
+    result = service.run_insights_query(
+        [LOG_GROUP], "fields @message | filter @message like /SOURCE/", start, end, 100, False
+    )
+
+    assert result["ok"] is True
+
+
+def test_run_insights_query_masks_sensitive_field_names():
+    results = [[{"field": "api_key", "value": "live-123"}, {"field": "msg", "value": "password=hunter2"}]]
+    service = _service_with_logs_client(_FakeInsightsClient(results, bytes_scanned=1))
+    start, end = _window()
+
+    rows = service.run_insights_query([LOG_GROUP], "fields api_key, msg", start, end, 100, False)["data"]["rows"]
+
+    assert rows == [{"api_key": "[REDACTED]", "msg": "password=[REDACTED_SECRET]"}]
+
+
+def test_list_log_groups_with_no_allowlist_enumerates_nothing(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("CLOUDWATCH_ALLOWED_LOG_GROUP", raising=False)
+    monkeypatch.setenv("CLOUDWATCH_ALLOWED_LOG_GROUP", "")
+    get_settings.cache_clear()
+
+    def _factory(settings):
+        raise AssertionError("must not call AWS when no log group is allowed")
+
+    result = CloudWatchService(get_settings(), logs_client_factory=_factory).list_log_groups()
+
+    assert result["ok"] is True
+    assert result["data"]["log_groups"] == []
+    assert result["data"]["note"]

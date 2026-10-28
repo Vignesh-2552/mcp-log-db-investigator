@@ -38,13 +38,16 @@ uv run investigation-server                      # start the MCP server (streama
 
 ## Architecture
 
+All code lives in the `opsinsight` package under `src/opsinsight/` (imports are `from opsinsight.<module> ...`).
+Paths below without a `src/` prefix are relative to that package directory.
+
 **Layering is strict and one-directional**: `tools/*` (thin `@mcp.tool()`-decorated wrappers)
 → `service/*` (business logic, one class per source) → `integrations/<source>/guardrail.py`
 (validate/reject, pure functions, no I/O) → `integrations/<source>/client.py` or `engine.py`
 (actual network/DB I/O). Guardrail functions never touch the network; service methods never
 build a query without passing it through the guardrail first.
 
-**`src/service/` holds one class per source** — `DatabaseService`, `CloudWatchService`,
+**`src/opsinsight/service/` holds one class per source** — `DatabaseService`, `CloudWatchService`,
 `NewRelicService` (`service/database_service.py`, `service/cloudwatch_service.py`,
 `service/newrelic_service.py`), all inheriting `BaseService` (`service/base.py`) for the
 shared `Settings` handle and the `ok(data, meta)` success-envelope helper. This is where a
@@ -106,30 +109,32 @@ grounding step is the main cause of queries that silently return zero rows becau
 name was guessed wrong.
 
 **`core/app.py` holds the single shared `mcp = FastMCP(...)` instance in its own module**,
-imported by every tool/resource/prompt module as `from core.app import mcp`. This exists
+imported by every tool/resource/prompt module as `from opsinsight.core.app import mcp`. This exists
 specifically so `server.py` (which is also the entry point run via `-m`/`investigation-server`)
 never gets circularly imported — see the comment in `core/app.py` if touching this.
 
-**Registration is import-side-effect based**: `src/tools/__init__.py` imports the three
+**Registration is import-side-effect based**: `src/opsinsight/tools/__init__.py` imports the three
 source packages (`cloudwatch`, `database`, `newrelic`); each package's own `__init__.py` in
 turn imports every tool file in it purely for the `@mcp.tool()` decorator to run, and
-re-exports the tool function so it can also be imported as `from tools.<source> import
-<tool_name>`. `src/resources/__init__.py` does the same for `@mcp.resource()`. `server.py`
+re-exports the tool function so it can also be imported as `from opsinsight.tools.<source> import
+<tool_name>`. `src/opsinsight/resources/__init__.py` does the same for `@mcp.resource()`. `server.py`
 imports both top-level `__init__` modules before calling `mcp.run()`. A new tool file must be
 added to its source package's `__init__.py` import list (and, transitively, the source
-package must already be listed in `src/tools/__init__.py`) or it will never register.
+package must already be listed in `src/opsinsight/tools/__init__.py`) or it will never register.
 
 **Errors are structured and self-correcting by design**: every guardrail raises a `ToolError`
 subclass (`GuardrailError`, `CWGuardrailError`, `NewRelicGuardrailError` in `core/errors.py`)
 carrying a machine-readable `rule` plus a `detail` string explaining what to change — never a
-bare "denied". Every `@mcp.tool()` function catches its own `ToolError`s and converts them via
-`.to_response()` into `{"ok": False, "error": {...}}`; successful results always follow
-`{"ok": True, "data": {...}, "meta": {...}}`. Preserve this shape in any new tool.
+bare "denied". The service method behind each tool (not the one-line tool file) catches
+`ToolError`s and converts them via `.to_response()` into `{"ok": False, "error": {...}}`;
+successful results always follow `{"ok": True, "data": {...}, "meta": {...}}` (built with
+`BaseService.ok`). Preserve this shape in any new tool.
 
 **Settings are one `pydantic-settings` object** (`core/config.py`), loaded once via
 `@lru_cache def get_settings()`. Tests that change env vars must call
 `get_settings.cache_clear()` (and, for DB tests, `await reset_engine()` from
-`integrations/database/engine.py`) — see `tests/conftest.py`'s `settings_override` fixture
+`integrations/database/engine.py`; for real boto3 clients, `reset_clients()` from
+`integrations/cloudwatch/client.py`) — see `tests/conftest.py`'s `settings_override` fixture
 and `tests/unit/test_newrelic_tools.py` for the pattern. Unit tests construct the service
 class directly (`CloudWatchService(get_settings(), logs_client_factory=lambda s: fake_client)`,
 `NewRelicService(get_settings(), run_nrql_fn=fake_run_nrql)`) rather than monkeypatching —
@@ -142,7 +147,7 @@ needs a fake client/network call in tests.
 Every tool that returns rows/log content calls `redact_rows`/`redact_log_event` right before
 building its response — do the same in new tools rather than relying on upstream masking.
 
-**The query cookbook (`src/data/query_cookbook.yaml`, exposed as the `docs://query-cookbook`
+**The query cookbook (`src/opsinsight/data/query_cookbook.yaml`, exposed as the `docs://query-cookbook`
 resource) is a deliberate accuracy lever**, not just documentation — per design doc §4.4,
 giving the client model curated example queries measurably improves generation accuracy over
 schema alone. When a query pattern proves useful or a source's field-naming quirk causes
@@ -153,9 +158,36 @@ repeated bad queries, add/update a cookbook entry rather than only fixing it in 
 reports if `bytesScanned` exceeds `CW_MAX_BYTES_SCANNED` — bytes scanned is always logged and
 returned in `meta`, since Logs Insights bills per GB scanned.
 
-**DB safety is defense-in-depth**: `sqlglot`-based AST validation (single `SELECT`/`WITH...SELECT`
-only, blocked node types, blocked dangerous functions, LIMIT injection/clamping) in
+**Engines and clients are cached per configuration, not globally**: `get_engine(settings)` keys
+on DSN + session timeouts and `get_logs_client`/`get_metrics_client` key on region + credentials,
+so a service built with an override `Settings` really talks to that DB/account. `introspect.*`
+takes `settings` and passes the engine into its TTL-cached catalog helpers, so cached catalog
+results are per-database too.
+
+**NRQL guardrail masks literals first**: `validate_nrql`/`enforce_nrql_window` run their regexes
+over the query with string literals and comments blanked out (same length, so offsets map back),
+so `WHERE message LIKE '%update;%'` isn't rejected. `nr_run_nrql_query` also caps the
+`SINCE`/`UNTIL` span at `NR_MAX_WINDOW_HOURS` and injects `SINCE NR_DEFAULT_WINDOW_HOURS hours
+ago` when absent; unparseable `SINCE` forms are rejected (`unsupported_time_range`).
+
+**HTTP transport security** lives in `core/transport_security.py` and is applied only in
+`server.run()` for the HTTP transport: `MCP_AUTH_TOKEN` bearer auth (fail closed on a non-loopback
+`SERVER_HOST` without it) and always-strict Host/Origin checks. **Audit**: `core/audit.py`'s
+`AuditMiddleware` (registered on the shared `mcp` in `core/app.py`) logs one JSON event per tool
+call/resource read. `tests/unit/test_audit.py` pins the registered tool inventory — adding a tool
+means updating that set after reviewing it for authorization, redaction and audit.
+
+**DB safety is defense-in-depth**: `sqlglot`-based AST validation (single `SELECT`/`WITH...SELECT`/
+`UNION`/`INTERSECT`/`EXCEPT` only, blocked node types incl. `SELECT INTO`/`FOR UPDATE`, a dangerous-function denylist matched by exact
+name *and* prefix — `dblink*`, `pg_sleep*`, advisory locks, `lo_*`, `query_to_xml` and friends —
+LIMIT injection/clamping) in
 `integrations/database/guardrail.py`, *plus* session-level hardening applied on every new
 physical connection in `integrations/database/engine.py` (`SET default_transaction_read_only
 = on`, statement timeout, idle-in-transaction timeout) — the DB role itself is meant to be the
 last line of defense, not the application layer alone.
+
+**Load limits**:
+- **Rate limit:** `core/rate_limit.py` builds a global FastMCP `RateLimitingMiddleware` (`RATE_LIMIT_RPS`/`RATE_LIMIT_BURST`). It is added in `server.run()`, after `AuditMiddleware`, so rejected requests are still audited.
+- **Concurrency slots:** in `DatabaseService`, every DB method runs inside `self._query_slot()`, a semaphore of `DB_MAX_CONCURRENT_QUERIES` that fails with `server_busy` after `DB_QUEUE_TIMEOUT_S`. New DB methods must use it too.
+- **Response budget:** row-returning methods pass rows through `_cap_rows` (cell truncation plus `fit_rows_to_budget` against `DB_MAX_RESPONSE_BYTES`) and report `meta.truncated`. Redact before capping, so a truncated cell can't hide part of a secret from the redaction regexes.
+- **Search fan-out:** `introspect`'s search fan-outs use `_gather_bounded` (`SEARCH_FANOUT_CONCURRENCY`) rather than an unbounded `asyncio.gather`.
