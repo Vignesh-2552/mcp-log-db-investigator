@@ -67,3 +67,23 @@ repeated bad queries from the client model, add/update an entry in
 [`src/data/query_cookbook.yaml`](src/data/query_cookbook.yaml) rather than
 only fixing it in prose — see `CLAUDE.md` for why this matters more than it
 looks like it should.
+
+## Releasing
+
+Releases publish to PyPI from `.github/workflows/publish.yml` when a `v*` tag
+is pushed. A version number can be published only once, so check before tagging.
+
+1. In a PR: bump `version` in `pyproject.toml`, run `uv lock`, and add a
+   `CHANGELOG.md` section for the new version.
+2. Merge the PR into `main` (direct pushes to `main` are blocked).
+3. Tag the merge commit and push the tag (one line at a time in Windows PowerShell 5.1):
+   ```
+   git checkout main
+   git pull --ff-only origin main
+   git tag -a vX.Y.Z -m "opsinsight-mcp X.Y.Z"
+   git push origin vX.Y.Z
+   ```
+   The workflow fails before publishing if the tag does not match the
+   `pyproject.toml` version.
+4. Check the run in the Actions tab, then verify a fresh install:
+   `uvx --refresh opsinsight-mcp@X.Y.Z` should start and list its tools.

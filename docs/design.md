@@ -49,7 +49,7 @@ The server is connected to **Cursor** and/or **Claude Desktop**, so the engineer
 │  Cursor  /  Claude App   │   ← engineer types: "why did order 88213 fail?"
 │      (MCP Client)        │
 └───────────┬──────────────┘
-            │  MCP protocol (streamable HTTP, :8000/mcp)
+            │  MCP protocol (stdio via uvx, or streamable HTTP :8001/mcp)
 ┌───────────▼──────────────────────────────────────────────────────────┐
 │              FastMCP Investigation Server                            │
 │                                                                      │
@@ -264,7 +264,7 @@ This is a first line of defence, not as rigorous as the SQL guardrail. It is goo
 
 - **PII redaction** in the response path (`core/redaction.py`), applied at the tool/service boundary, not deeper in the stack: column-name masking (`PII_COLUMN_NAMES`) plus regex patterns (email / card / Aadhaar / PAN / phone) applied to both DB/NRQL row values and raw log message text. UUIDs are protected from the card/Aadhaar patterns so they are not partially redacted. Toggle: `PII_REDACTION` (default on).
 - **No secrets in tool arguments.** Credentials come from environment / AWS profile only.
-- **Server-side logging** to stderr (`core/logging_config.py`). Operational logs capture guardrail decisions and errors so issues can be debugged without exposing sensitive data as tool results. Stderr is used so a future stdio transport would keep stdout free for JSON-RPC.
+- **Server-side logging** to stderr (`core/logging_config.py`). Operational logs capture guardrail decisions and errors so issues can be debugged without exposing sensitive data as tool results. Stderr is used so the stdio transport keeps stdout free for JSON-RPC.
 
 ### 6.5 Human-in-the-Loop
 
@@ -275,13 +275,20 @@ This is a first line of defence, not as rigorous as the SQL guardrail. It is goo
 
 ### 7.1 Transport
 
-The process currently runs **streamable HTTP only** (`server.py` → `mcp.run(transport="streamable-http")`). Defaults: `0.0.0.0:8000/mcp`, overridable via `SERVER_HOST` / `SERVER_PORT` / `SERVER_PATH`.
+`server.py` exposes two entry points over one `run(default_transport)`; `MCP_TRANSPORT` (`stdio` | `streamable-http`) overrides either default.
+
+| Entry point | Default transport | Used by |
+|---|---|---|
+| `opsinsight-mcp` | stdio | MCP clients launching the PyPI package via `uvx opsinsight-mcp` (no port, no `.env`; config comes from the client's `env` block) |
+| `investigation-server` | streamable HTTP | Running from source and the Docker image |
+
+HTTP defaults: `127.0.0.1:8001/mcp`, overridable via `SERVER_HOST` / `SERVER_PORT` / `SERVER_PATH` (a platform-assigned `$PORT` is used when `SERVER_PORT` is unset). The Docker image sets `SERVER_HOST=0.0.0.0` and `SERVER_PORT=8000`.
 
 | Mode | Transport | Status |
 |---|---|---|
-| Local / team laptop | Streamable HTTP | **Current** — `uv run investigation-server` |
-| stdio | `stdio` | Not wired in `server.py` (logging still writes to stderr so it would be compatible) |
-| Shared team server with OAuth/bearer | Streamable HTTP + auth | Not implemented |
+| Individual user | stdio via `uvx opsinsight-mcp` | **Current** (PyPI) |
+| Local / team laptop | Streamable HTTP | **Current**: `uv run investigation-server` or the GHCR image |
+| Shared team server with OAuth/bearer | Streamable HTTP + auth | Not implemented (see `docs/roadmap.md` Phase 3) |
 
 ### 7.2 Environment
 
@@ -318,8 +325,8 @@ NR_DEFAULT_WINDOW_HOURS=24
 NR_MAX_ROWS=500
 
 # Server
-SERVER_HOST=0.0.0.0
-SERVER_PORT=8000
+SERVER_HOST=127.0.0.1
+SERVER_PORT=8001
 SERVER_PATH=/mcp
 PII_REDACTION=true
 LOG_LEVEL=INFO
@@ -334,13 +341,27 @@ LOG_LEVEL=INFO
   "mcpServers": {
     "investigation": {
       "type": "http",
-      "url": "http://localhost:8000/mcp"
+      "url": "http://localhost:8001/mcp"
     }
   }
 }
 ```
 
 **Claude Desktop** — same HTTP shape in `claude_desktop_config.json`.
+
+**stdio via uvx** (any client) — no running server needed:
+
+```json
+{
+  "mcpServers": {
+    "investigation": {
+      "command": "uvx",
+      "args": ["opsinsight-mcp"],
+      "env": { "DB_URL": "postgresql+asyncpg://readonly_user:pass@host:5432/dbname" }
+    }
+  }
+}
+```
 
 ## 8. Error Handling
 
@@ -385,6 +406,7 @@ Weekly review of tool usage and guardrail rejections to improve the cookbook rem
 | **2c** | Service layer + `Container` composition root | **Done** |
 | **3** | Convenience tools `cw_get_trace_events`, `db_resolve_store`, catalog-driven `db_search_by_identifier` | **Done** (CloudWatch-only trace; not the original cross-source `trace_request`) |
 | **4** | Streamable HTTP transport | **Done** (no OAuth/bearer; bind is open HTTP) |
+| **4b** | stdio transport, PyPI package `opsinsight-mcp` (uvx), GHCR image, tag-triggered publishing | **Done** (0.1.0) |
 | **5** | Composite `investigation_start` / `trace_request`, MCP prompts, shared-deployment auth, dashboards | **Not started** |
 
 ## 11. Risks
@@ -405,8 +427,8 @@ Weekly review of tool usage and guardrail rejections to improve the cookbook rem
 
 1. Database is **PostgreSQL** (sqlglot dialect `postgres`, asyncpg, `pg_class` catalog queries).
 2. Logs are in **AWS CloudWatch Logs** (Logs Insights + FilterLogEvents) and optionally **New Relic** (NRQL via NerdGraph).
-3. Server is **Python 3.13+** with FastMCP, SQLAlchemy, sqlglot, boto3, httpx.
-4. Primary client is **Cursor** and/or **Claude Desktop**, talking HTTP to `localhost:8000/mcp`.
+3. Server is **Python 3.11+** with FastMCP, SQLAlchemy, sqlglot, boto3, httpx.
+4. Primary client is **Cursor**, **Claude Desktop** or **Claude Code**, launching the server over stdio (`uvx opsinsight-mcp`) or talking HTTP to `localhost:8001/mcp`.
 
 **Still open / ops-dependent:**
 
@@ -422,7 +444,7 @@ Weekly review of tool usage and guardrail rejections to improve the cookbook rem
 
 ```
 src/
-  server.py                 # entry point: streamable HTTP
+  server.py                 # entry points: opsinsight-mcp (stdio), investigation-server (HTTP)
   core/
     app.py                  # shared FastMCP instance
     container.py            # composition root
