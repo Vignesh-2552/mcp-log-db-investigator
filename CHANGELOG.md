@@ -6,6 +6,8 @@ to PyPI only once, so every release gets a new number.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-28
+
 ### Security
 See `docs/security-audit.md` for the full audit (2026-10-28).
 - **Breaking:** the HTTP transport now refuses to start on a non-loopback
@@ -108,5 +110,7 @@ First PyPI release.
 ### Changed
 - Minimum Python lowered from 3.13 to 3.11.
 
+[Unreleased]: https://github.com/Vignesh-2552/mcp-log-db-investigator/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Vignesh-2552/mcp-log-db-investigator/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/Vignesh-2552/mcp-log-db-investigator/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Vignesh-2552/mcp-log-db-investigator/releases/tag/v0.1.0

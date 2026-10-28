@@ -1,6 +1,6 @@
 # opsinsight-mcp: Roadmap to Enterprise-Grade
 
-Date: 2026-10-28 · Current release: `opsinsight-mcp` 0.1.1 (PyPI), Docker image on GHCR
+Date: 2026-10-28 · Current release: `opsinsight-mcp` 0.2.0 (PyPI), Docker image on GHCR
 
 The next level for this project is to move from "a safe query tool" to "an investigation product teams can trust and deploy". In practice that means four phases:
 
@@ -37,7 +37,7 @@ Small fixes that remove friction for every new user. Items 0.1–0.5 and 0.8 shi
 
 **Done when:** a new user can copy the example config with placeholders, get a clear error for each unconfigured source, and fix it without reading code.
 
-## Phase 1: First-run experience and packaging (release 0.2.0, 2–3 weeks)
+## Phase 1: First-run experience and packaging (release 0.3.0, 2–3 weeks)
 
 The biggest support cost for an MCP server is "it doesn't connect". This phase makes the server explain itself.
 
@@ -49,7 +49,7 @@ The biggest support cost for an MCP server is "it doesn't connect". This phase m
 
 **Done when:** `uvx opsinsight-mcp doctor` tells a new user exactly which variable is wrong, and the package is discoverable outside Agensi.
 
-## Phase 2: Investigation features (release 0.3.0, 3–5 weeks)
+## Phase 2: Investigation features (release 0.4.0, 3–5 weeks)
 
 These are the features from design doc §4.5 that were planned but never built. They turn 16 separate tools into a guided investigation.
 
@@ -65,7 +65,7 @@ Composite tools must keep the existing rules: every sub-query goes through its s
 
 **Done when:** a ticket like "order 99283 failed at 2pm" resolves with one prompt and one `trace_request` call, instead of a separate inventory, describe and query call for each source.
 
-## Phase 3: Enterprise readiness (releases 0.4–1.0, 1–3 months)
+## Phase 3: Enterprise readiness (releases 0.5–1.0, 1–3 months)
 
 What a security or platform team asks for before approving a shared deployment.
 
@@ -112,7 +112,7 @@ Pick based on user demand. Each item reuses the existing service, guardrail and 
 | 1 | ~~Phase 0 as release 0.1.1~~ (shipped; 0.6/0.7 open) | Small | High: removes first-run failures |
 | 2 | `doctor` command, plus registry and directory listings | Small–medium | High: adoption |
 | 3 | MCP prompts | Small | High: the workflow works in every client |
-| 4 | ~~Module namespacing~~ (done, unreleased) | Medium | Medium: prevents future breakage; do before 1.0 |
+| 4 | ~~Module namespacing~~ (done, 0.2.0) | Medium | Medium: prevents future breakage; do before 1.0 |
 | 5 | `trace_request` | Medium–large | Very high: the core differentiator |
 | 6 | HTTP auth and audit log | Medium | Required for any shared or team deployment |
 | 7 | Metrics, signed images, Helm | Medium | Enterprise sign-off |
