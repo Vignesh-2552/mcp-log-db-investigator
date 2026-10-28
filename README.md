@@ -134,12 +134,13 @@ Then point the client at `http://localhost:8000/mcp`. To build the image
 yourself instead: `docker build -t investigation-mcp .` and use
 `investigation-mcp` as the image name.
 
-Three things differ from the local (`uv run`) path:
+What differs from the local (`uv run`) path:
 
-- `SERVER_HOST` must be overridden to `0.0.0.0` — the default `127.0.0.1`
-  would only be reachable from inside the container.
-- `SERVER_PORT` must match the container side of `-p` (`8000` above). The app
-  default and `.env.example` both use `8001`; `-e` overrides the `.env` value.
+- The image defaults to `SERVER_HOST=0.0.0.0` and `SERVER_PORT=8000`, so it is
+  reachable through `-p ...:8000`. A `--env-file` value overrides those
+  defaults, and `.env.example` sets `127.0.0.1` and `8001`; the `-e` flags
+  above override the `.env` file again, so keep them (or drop `SERVER_HOST`
+  and `SERVER_PORT` from the `.env` you use with Docker).
 - Use `host.docker.internal` instead of `localhost` in `DB_URL` for a database
   running on your own machine.
 - `AWS_PROFILE` won't work (there's no local AWS config file inside the

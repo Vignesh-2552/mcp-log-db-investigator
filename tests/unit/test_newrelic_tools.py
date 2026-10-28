@@ -81,3 +81,25 @@ async def test_describe_log_fields_notes_empty_result():
     assert result["ok"] is True
     assert result["data"]["fields"] == []
     assert result["data"]["note"] is not None
+
+
+@pytest.mark.parametrize("account_id", ["CHANGE_ME", "12a4", " "])
+async def test_non_numeric_account_id_returns_structured_error(monkeypatch, account_id):
+    # Uses the real NerdGraph client: the check must fire before any network call.
+    monkeypatch.setenv("NEW_RELIC_ACCOUNT_ID", account_id)
+    get_settings.cache_clear()
+
+    result = await NewRelicService(get_settings()).list_event_types()
+
+    assert result["ok"] is False
+    assert result["error"]["rule"] == "invalid_account_id"
+
+
+async def test_placeholder_account_id_is_named_in_error(monkeypatch):
+    monkeypatch.setenv("NEW_RELIC_ACCOUNT_ID", "CHANGE_ME")
+    get_settings.cache_clear()
+
+    result = await NewRelicService(get_settings()).run_nrql_query("SELECT count(*) FROM Log SINCE 1 hour ago")
+
+    assert result["error"]["rule"] == "invalid_account_id"
+    assert "CHANGE_ME" in result["error"]["detail"]

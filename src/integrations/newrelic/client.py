@@ -16,7 +16,14 @@ async def run_nrql(query: str, settings: Settings | None = None) -> dict:
     if not settings.new_relic_api_key or not settings.new_relic_account_id:
         raise ToolError(
             rule="missing_credentials",
-            message="NEW_RELIC_API_KEY and NEW_RELIC_ACCOUNT_ID must be set in .env.",
+            message="NEW_RELIC_API_KEY and NEW_RELIC_ACCOUNT_ID must be set (in .env or the MCP client config's env block).",
+        )
+    account_id = settings.new_relic_account_id.strip()
+    if not account_id.isdigit():
+        raise ToolError(
+            rule="invalid_account_id",
+            message="NEW_RELIC_ACCOUNT_ID must be your numeric New Relic account id.",
+            detail=f"Got {account_id!r}. Find the id in New Relic under your account name > Administration.",
         )
 
     logger.info("Running NRQL query against account %s", settings.new_relic_account_id)
@@ -29,7 +36,7 @@ async def run_nrql(query: str, settings: Settings | None = None) -> dict:
             },
             json={
                 "query": NRQL_GRAPHQL_QUERY,
-                "variables": {"accountId": int(settings.new_relic_account_id), "nrql": query},
+                "variables": {"accountId": int(account_id), "nrql": query},
             },
         )
     response.raise_for_status()
