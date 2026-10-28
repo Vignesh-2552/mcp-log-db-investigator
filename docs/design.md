@@ -265,7 +265,8 @@ This is a first line of defence, not as rigorous as the SQL guardrail. It is goo
 ### 6.4 Data Protection
 
 - **PII redaction** in the response path (`core/redaction.py`), applied at the tool/service boundary, not deeper in the stack: column-name masking (`PII_COLUMN_NAMES`) plus regex patterns (email / card / Aadhaar / PAN / phone) applied to both DB/NRQL row values and raw log message text. UUIDs and Unix epoch timestamps (10-digit seconds / 13-digit millis starting with `1`) are protected from the card/phone/Aadhaar patterns so they are not redacted. Toggle: `PII_REDACTION` (default on).
-- **No secrets in tool arguments.** Credentials come from environment / AWS profile only.
+- **Credential redaction.** `key=value` / JSON pairs whose key looks like a secret (`password`, `secret`, `token`, `api_key`, `authorization`, ...), bearer tokens, JWTs, AWS access key ids, New Relic `NRAK-` keys and PEM private keys are masked in text; columns/fields whose name contains a secret-like word are masked whole.
+- **No secrets in tool arguments.** Credentials come from environment / AWS profile only. `DB_URL` and all keys are `SecretStr` in `Settings`.
 - **Server-side logging** to stderr (`core/logging_config.py`). Operational logs capture guardrail decisions and errors so issues can be debugged without exposing sensitive data as tool results. Stderr is used so the stdio transport keeps stdout free for JSON-RPC.
 
 ### 6.5 Human-in-the-Loop
@@ -284,13 +285,16 @@ This is a first line of defence, not as rigorous as the SQL guardrail. It is goo
 | `opsinsight-mcp` | stdio | MCP clients launching the PyPI package via `uvx opsinsight-mcp` (no port, no `.env`; config comes from the client's `env` block) |
 | `investigation-server` | streamable HTTP | Running from source and the Docker image |
 
+HTTP security (`core/transport_security.py`): optional shared bearer token `MCP_AUTH_TOKEN` (constant-time compare, min 32 chars); a non-loopback `SERVER_HOST` refuses to start without it unless `ALLOW_UNAUTHENTICATED_HTTP=true`. Host/Origin validation is always strict (`host_origin_protection=True`), not FastMCP's `"auto"`, which skips the check when the process binds `0.0.0.0` (Docker); `SERVER_ALLOWED_HOSTS` / `SERVER_ALLOWED_ORIGINS` extend the loopback defaults. stdio needs neither: it trusts the local process that launched it.
+
 HTTP defaults: `127.0.0.1:8001/mcp`, overridable via `SERVER_HOST` / `SERVER_PORT` / `SERVER_PATH` (a platform-assigned `$PORT` is used when `SERVER_PORT` is unset). The Docker image sets `SERVER_HOST=0.0.0.0` and `SERVER_PORT=8000`.
 
 | Mode | Transport | Status |
 |---|---|---|
 | Individual user | stdio via `uvx opsinsight-mcp` | **Current** (PyPI) |
 | Local / team laptop | Streamable HTTP | **Current**: `uv run investigation-server` or the GHCR image |
-| Shared team server with OAuth/bearer | Streamable HTTP + auth | Not implemented (see `docs/roadmap.md` Phase 3) |
+| Shared team server, one shared bearer token | Streamable HTTP + `MCP_AUTH_TOKEN` | **Current** |
+| Shared team server with per-user OAuth/JWT and per-tool scopes | Streamable HTTP + IdP | Not implemented (see `docs/roadmap.md` Phase 3) |
 
 ### 7.2 Environment
 
@@ -389,10 +393,12 @@ The quality of the error messages directly determines how well the model self-co
 - Bytes scanned always returned in CloudWatch `meta`.
 - Benign streamable-HTTP client-disconnect noise from the MCP SDK is filtered so it does not look like a server bug.
 
+- **Audit events** (`core/audit.py`, FastMCP middleware): one JSON line per tool call / resource read on the `investigation_server.audit` logger with actor (token client id or `unauthenticated`), tool/URI, redacted + truncated arguments, outcome (`ok` / `rejected` + rule / `exception`), row count, duration and request id. Emitted on every path, including guardrail rejections.
+
 **Not implemented**
 
 - Per-tool metrics (call count, p50/p95 latency, error rate) and dashboards.
-- A dedicated audit log (JSONL / CloudWatch Logs).
+- A dedicated, tamper-evident audit sink (audit events currently share the stderr log stream).
 - Tracking median time-to-root-cause per ticket.
 - Replica lag in `db_run_query` metadata.
 

@@ -1,5 +1,6 @@
 from fastmcp import FastMCP
 
+from opsinsight.core.audit import AuditMiddleware
 from opsinsight.core.logging_config import get_logger
 
 logger = get_logger("app")
@@ -13,6 +14,6 @@ logger = get_logger("app")
 # path. If other modules import `mcp` from `server`, running `server.py`
 # re-triggers the whole registration chain under a second module identity
 # and blows up with a circular ImportError partway through.
-mcp = FastMCP("investigation-server")
+mcp = FastMCP("investigation-server", middleware=[AuditMiddleware()])
 logger.debug("Initialized FastMCP instance: investigation-server")
 

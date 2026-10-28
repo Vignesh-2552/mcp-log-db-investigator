@@ -8,8 +8,10 @@ from opsinsight.core.errors import GuardrailError
 from opsinsight.core.logging_config import get_logger
 from opsinsight.integrations.database.constants import (
     BLOCKED_NODES,
+    DANGEROUS_FUNCTION_PREFIXES,
     DANGEROUS_FUNCTIONS,
     DIALECT,
+    MAX_SQL_CHARS,
 )
 
 logger = get_logger("database.guardrail")
@@ -41,9 +43,15 @@ def _table_name(table: exp.Table) -> str:
 
 
 def _function_name(node: exp.Func) -> str:
+    # `.name` is the bare name for both `"pg_sleep"(...)` (quoted Identifier)
+    # and `pg_catalog.pg_sleep(...)`; str(node.this) would keep the quotes.
     if isinstance(node, exp.Anonymous):
-        return str(node.this).lower()
+        return node.name.lower()
     return node.sql_name().lower()
+
+
+def _is_dangerous_function(name: str) -> bool:
+    return name in DANGEROUS_FUNCTIONS or name.startswith(DANGEROUS_FUNCTION_PREFIXES)
 
 
 def clamp_and_inject_limit(
@@ -95,6 +103,11 @@ def validate_sql(
     client model gets a self-correctable error rather than a bare denial.
     """
     logger.debug("Validating SQL query (max_rows=%d, requested_limit=%s)", max_rows, requested_limit)
+    if len(sql) > MAX_SQL_CHARS:
+        raise GuardrailError(
+            rule="query_too_long",
+            message=f"SQL is {len(sql)} characters; the maximum is {MAX_SQL_CHARS}.",
+        )
     try:
         statements = [s for s in sqlglot.parse(sql, read=DIALECT) if s is not None]
     except Exception as e:
@@ -134,7 +147,7 @@ def validate_sql(
             )
         if isinstance(node, exp.Func):
             fname = _function_name(node)
-            if fname in DANGEROUS_FUNCTIONS:
+            if _is_dangerous_function(fname):
                 logger.warning("SQL validation failed (rule=blocked_function): Function %s()", fname)
                 raise GuardrailError(
                     rule="blocked_function",

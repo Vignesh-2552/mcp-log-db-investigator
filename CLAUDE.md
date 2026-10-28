@@ -170,8 +170,17 @@ so `WHERE message LIKE '%update;%'` isn't rejected. `nr_run_nrql_query` also cap
 `SINCE`/`UNTIL` span at `NR_MAX_WINDOW_HOURS` and injects `SINCE NR_DEFAULT_WINDOW_HOURS hours
 ago` when absent; unparseable `SINCE` forms are rejected (`unsupported_time_range`).
 
+**HTTP transport security** lives in `core/transport_security.py` and is applied only in
+`server.run()` for the HTTP transport: `MCP_AUTH_TOKEN` bearer auth (fail closed on a non-loopback
+`SERVER_HOST` without it) and always-strict Host/Origin checks. **Audit**: `core/audit.py`'s
+`AuditMiddleware` (registered on the shared `mcp` in `core/app.py`) logs one JSON event per tool
+call/resource read. `tests/unit/test_audit.py` pins the registered tool inventory — adding a tool
+means updating that set after reviewing it for authorization, redaction and audit.
+
 **DB safety is defense-in-depth**: `sqlglot`-based AST validation (single `SELECT`/`WITH...SELECT`/
-`UNION`/`INTERSECT`/`EXCEPT` only, blocked node types, blocked dangerous functions, LIMIT injection/clamping) in
+`UNION`/`INTERSECT`/`EXCEPT` only, blocked node types incl. `SELECT INTO`/`FOR UPDATE`, a dangerous-function denylist matched by exact
+name *and* prefix — `dblink*`, `pg_sleep*`, advisory locks, `lo_*`, `query_to_xml` and friends —
+LIMIT injection/clamping) in
 `integrations/database/guardrail.py`, *plus* session-level hardening applied on every new
 physical connection in `integrations/database/engine.py` (`SET default_transaction_read_only
 = on`, statement timeout, idle-in-transaction timeout) — the DB role itself is meant to be the

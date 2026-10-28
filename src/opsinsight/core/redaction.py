@@ -27,6 +27,32 @@ _PROTECTED_RE = re.compile(
     r"|\b1\d{9}(?:\d{3})?\b"
 )
 
+# Credentials embedded in free text (log lines, JSON payloads, error strings).
+# Applied before the PII patterns. `key=value` / `"key": "value"` pairs keep
+# the key and lose the value, so the log line stays readable.
+_SECRET_KEY_RE = re.compile(
+    r"""(?ix)
+    (?P<key>\b[\w.-]*(?:password|passwd|pwd|secret|api[_-]?key|token|private[_-]?key|credential|authorization)s?)
+    (?P<sep>["']?\s*[:=]\s*)
+    (?P<value>"[^"]*"|'[^']*'|(?:(?:bearer|basic)\s+)?[^\s"',;&}\]]+)
+    """
+)
+_SECRET_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{8,}"),
+    re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"),  # AWS access key id
+    re.compile(r"\bNRAK-[A-Z0-9]{27}\b"),  # New Relic user API key
+    re.compile(r"\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}"),  # JWT
+    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)", re.DOTALL),
+]
+_REDACTED_SECRET = "[REDACTED_SECRET]"
+
+
+def _mask_secret_value(match: re.Match[str]) -> str:
+    value = match.group("value")
+    quote = value[0] if value[:1] in ("'", '"') else ""
+    return f"{match.group('key')}{match.group('sep')}{quote}{_REDACTED_SECRET}{quote}"
+
+
 PII_COLUMN_NAMES = {
     "email",
     "email_address",
@@ -47,6 +73,27 @@ PII_COLUMN_NAMES = {
     "password_hash",
 }
 
+# Any column/key *containing* one of these is masked too (api_key,
+# client_secret, stripe_token, db_password, ...). Deliberately broad:
+# over-masking a harmless `token_count` beats returning a live credential.
+SENSITIVE_KEY_PARTS = (
+    "password",
+    "passwd",
+    "secret",
+    "token",
+    "api_key",
+    "apikey",
+    "private_key",
+    "credential",
+    "authorization",
+    "cookie",
+)
+
+
+def is_sensitive_key(name: str) -> bool:
+    lowered = name.lower()
+    return lowered in PII_COLUMN_NAMES or any(part in lowered for part in SENSITIVE_KEY_PARTS)
+
 
 def enabled(settings: Settings | None = None) -> bool:
     return (settings or get_settings()).pii_redaction
@@ -59,7 +106,10 @@ def redact_text(value: str) -> str:
         originals.append(match.group())
         return f"\x00P{len(originals) - 1}\x00"
 
-    protected = _PROTECTED_RE.sub(_protect, value)
+    protected = _SECRET_KEY_RE.sub(_mask_secret_value, value)
+    for pattern in _SECRET_PATTERNS:
+        protected = pattern.sub(_REDACTED_SECRET, protected)
+    protected = _PROTECTED_RE.sub(_protect, protected)
     for label, pattern in _PATTERNS:
         protected = pattern.sub(f"[REDACTED_{label}]", protected)
     if not originals:
@@ -76,7 +126,7 @@ def redact_row(row: dict[str, Any], settings: Settings | None = None) -> dict[st
 def _redact_mapping(value: Mapping[Any, Any]) -> dict[Any, Any]:
     redacted: dict[Any, Any] = {}
     for key, item in value.items():
-        if isinstance(key, str) and key.lower() in PII_COLUMN_NAMES:
+        if isinstance(key, str) and is_sensitive_key(key):
             redacted[key] = "[REDACTED]" if item is not None else None
         else:
             redacted[key] = _redact_value(item)

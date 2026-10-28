@@ -3,6 +3,11 @@ from opsinsight import tools as _tools  # noqa: F401
 from opsinsight.core.app import mcp
 from opsinsight.core.config import get_settings
 from opsinsight.core.logging_config import get_logger, setup_logging
+from opsinsight.core.transport_security import (
+    InsecureHttpConfigError,
+    build_auth,
+    http_run_kwargs,
+)
 
 logger = get_logger("server")
 
@@ -21,11 +26,23 @@ def run(default_transport: str) -> None:
         mcp.run(transport="stdio", show_banner=False)
         return
 
+    try:
+        mcp.auth = build_auth(settings)
+    except InsecureHttpConfigError as e:
+        logger.error("%s", e)
+        raise SystemExit(1) from e
+    if mcp.auth is None:
+        logger.warning(
+            "HTTP transport has NO authentication (SERVER_HOST=%s). Set MCP_AUTH_TOKEN to require a bearer token.",
+            settings.server_host,
+        )
+
     logger.info(
-        "Starting Investigation FastMCP Server on %s:%s%s (transport: streamable-http, log_level: %s)",
+        "Starting Investigation FastMCP Server on %s:%s%s (transport: streamable-http, auth: %s, log_level: %s)",
         settings.server_host,
         settings.server_port,
         settings.server_path,
+        "bearer-token" if mcp.auth else "none",
         settings.log_level,
     )
     mcp.run(
@@ -33,6 +50,7 @@ def run(default_transport: str) -> None:
         host=settings.server_host,
         port=settings.server_port,
         path=settings.server_path,
+        **http_run_kwargs(settings),
     )
 
 

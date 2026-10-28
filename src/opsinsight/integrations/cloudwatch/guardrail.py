@@ -6,7 +6,9 @@ from opsinsight.core.errors import CWGuardrailError
 from opsinsight.core.logging_config import get_logger
 from opsinsight.integrations.cloudwatch.constants import (
     BACKOFF_SCHEDULE,
+    MAX_INSIGHTS_QUERY_CHARS,
     RUNNING_STATUSES,
+    SOURCE_COMMAND_RE,
     TRACE_FIELD_RE,
 )
 
@@ -64,6 +66,25 @@ def clamp_window(
             detail=f"Narrow the time window to at most {max_hours} hours.",
         )
     return start_dt, end_dt
+
+
+def validate_insights_query(query: str) -> str:
+    """Logs Insights' `SOURCE logGroups(...)` command selects log groups from
+    inside the query text; reject it so the only log groups a query can touch
+    are the allowlist-checked `log_groups` argument."""
+    if len(query) > MAX_INSIGHTS_QUERY_CHARS:
+        raise CWGuardrailError(
+            rule="query_too_long",
+            message=f"Query is {len(query)} characters; the maximum is {MAX_INSIGHTS_QUERY_CHARS}.",
+        )
+    if SOURCE_COMMAND_RE.search(query):
+        logger.warning("CloudWatch guardrail error (source_command_not_allowed)")
+        raise CWGuardrailError(
+            rule="source_command_not_allowed",
+            message="The SOURCE command is not allowed in Logs Insights queries.",
+            detail="Pass log groups via the `log_groups` argument instead; they are checked against the allowlist.",
+        )
+    return query
 
 
 def validate_trace_field(field: str) -> str:

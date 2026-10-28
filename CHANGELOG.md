@@ -6,6 +6,35 @@ to PyPI only once, so every release gets a new number.
 
 ## [Unreleased]
 
+### Security
+See `docs/security-audit.md` for the full audit (2026-10-28).
+- **Breaking:** the HTTP transport now refuses to start on a non-loopback
+  `SERVER_HOST` (including the Docker image, which binds `0.0.0.0`) unless
+  `MCP_AUTH_TOKEN` is set, or `ALLOW_UNAUTHENTICATED_HTTP=true` is set explicitly.
+  Clients send the token as `Authorization: Bearer <token>`.
+- **Breaking:** Host/Origin (DNS-rebinding) validation is always strict. Hostnames
+  other than `localhost`/`127.0.0.1`/`::1` must be listed in `SERVER_ALLOWED_HOSTS`.
+  Before, a container's published port accepted rebinding requests from any web page.
+- SQL guardrail: blocked `dblink*` (incl. `dblink_exec`, which writes over a
+  separate non-read-only connection), `query_to_xml` and related functions that
+  run a SQL string, `pg_sleep_for`/`pg_sleep_until`, advisory locks, `set_config`,
+  `lo_*`, `pg_ls_*`, `pg_stat_file`, `pg_reload_conf`, `nextval`/`setval`,
+  `SELECT ... INTO`, `FOR UPDATE/SHARE`, and quoted function names (`"pg_sleep"(...)`).
+- Redaction masks credentials in text (`password=...`, bearer tokens, JWTs, AWS
+  and New Relic keys, PEM private keys) and any column/field whose name contains a
+  secret-like word (`api_key`, `client_secret`, `*_token`, ...), including
+  CloudWatch Insights result fields.
+- Every tool call and resource read emits a structured audit event (actor, tool,
+  redacted arguments, outcome, duration) on the `investigation_server.audit` logger.
+- `cw_run_insights_query` rejects the `SOURCE` command, so queries can only touch
+  allowlisted log groups. `cw_list_log_groups` returns nothing when
+  `CLOUDWATCH_ALLOWED_LOG_GROUP` is unset instead of listing every log group.
+- Length caps on SQL (50k chars), NRQL (20k) and Logs Insights (10k) queries.
+- The Docker image runs as an unprivileged user (uid 10001).
+- `DB_URL` is a secret setting (kept out of reprs and validation errors).
+- Lockfile: authlib 1.9.1, pyjwt 2.15.1, urllib3 2.8.0, dnspython 2.9.0,
+  opentelemetry-api 1.45.1 (transitive; fixes the advisories pip-audit reported).
+
 ### Changed
 - All code moved into the `opsinsight` package (`src/opsinsight/`). The wheel now
   installs one top-level package instead of generic modules (`core`, `tools`,

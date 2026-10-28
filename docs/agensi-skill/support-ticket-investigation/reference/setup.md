@@ -38,11 +38,12 @@ For a team server, run the published image and point clients at its URL
 (`scripts/mcp-config.http.example.json`):
 
 ```
-docker run --rm -p 127.0.0.1:8000:8000 --env-file .env -e SERVER_HOST=0.0.0.0 -e SERVER_PORT=8000 ghcr.io/vignesh-2552/mcp-log-db-investigator:latest
+docker run --rm -p 127.0.0.1:8000:8000 --env-file .env -e SERVER_HOST=0.0.0.0 -e SERVER_PORT=8000 -e MCP_AUTH_TOKEN=<your-token> ghcr.io/vignesh-2552/mcp-log-db-investigator:latest
 ```
 
 Copy `scripts/env.example` to `.env` and fill in only the sources you use. Never commit `.env`. Inside the container,
 use the access-key pair instead of `AWS_PROFILE`, and `host.docker.internal` instead of `localhost` in `DB_URL`.
 
-The HTTP transport has no built-in authentication. Keep it bound to loopback or a private network, and put an
-authenticated proxy in front of it before exposing it more widely.
+The container will not start without `MCP_AUTH_TOKEN` (generate one with `python -c "import secrets; print(secrets.token_urlsafe(32))"`).
+Send it from the client as an `Authorization: Bearer <token>` header (see `scripts/mcp-config.http.example.json`).
+If clients reach the server by a hostname other than `localhost`, add it to `SERVER_ALLOWED_HOSTS`.

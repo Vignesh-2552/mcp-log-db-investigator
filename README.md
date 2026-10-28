@@ -119,9 +119,19 @@ uv run investigation-server
 ```
 
 The server starts on `http://127.0.0.1:8001/mcp` by default (streamable HTTP
-transport; change it with `SERVER_PORT`). It has no built-in HTTP authentication, so only set `SERVER_HOST`
-to a non-loopback address when access is protected by an authenticated proxy
-or equivalent network control.
+transport; change it with `SERVER_PORT`). On loopback, a bearer token is
+optional; set `MCP_AUTH_TOKEN` to require one. The server **refuses to start**
+on a non-loopback `SERVER_HOST` unless `MCP_AUTH_TOKEN` is set (or you
+explicitly set `ALLOW_UNAUTHENTICATED_HTTP=true` because an authenticating
+proxy already guards it). Generate a token with:
+
+```powershell
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+Requests are also checked against a Host/Origin allowlist (DNS-rebinding
+protection): `localhost`, `127.0.0.1` and `::1` always work; add a public
+hostname with `SERVER_ALLOWED_HOSTS`.
 
 ### Docker
 
@@ -129,15 +139,22 @@ For a long-running HTTP server (shared by a team, or on a server host), run the
 image published to GHCR on every merge to `main`:
 
 ```powershell
-docker run --rm -p 127.0.0.1:8000:8000 --env-file .env -e SERVER_HOST=0.0.0.0 -e SERVER_PORT=8000 ghcr.io/vignesh-2552/mcp-log-db-investigator:latest
+docker run --rm -p 127.0.0.1:8000:8000 --env-file .env -e SERVER_HOST=0.0.0.0 -e SERVER_PORT=8000 -e MCP_AUTH_TOKEN=<your-token> ghcr.io/vignesh-2552/mcp-log-db-investigator:latest
 ```
 
-Then point the client at `http://localhost:8000/mcp`. To build the image
+Then point the client at `http://localhost:8000/mcp` with an
+`Authorization: Bearer <your-token>` header (see
+[Configure Your AI Assistant](#configure-your-ai-assistant)). To build the image
 yourself instead: `docker build -t investigation-mcp .` and use
 `investigation-mcp` as the image name.
 
 What differs from the local (`uv run`) path:
 
+- The container binds `0.0.0.0`, so it **will not start without
+  `MCP_AUTH_TOKEN`** (put it in the `.env` or pass `-e`). It runs as an
+  unprivileged user (uid 10001).
+- If clients reach it by a hostname other than `localhost`, add that name to
+  `SERVER_ALLOWED_HOSTS` (otherwise requests get HTTP 421).
 - The image defaults to `SERVER_HOST=0.0.0.0` and `SERVER_PORT=8000`, so it is
   reachable through `-p ...:8000`. A `--env-file` value overrides those
   defaults, and `.env.example` sets `127.0.0.1` and `8001`; the `-e` flags
@@ -169,12 +186,14 @@ See `.env.example` for every available variable, including tuning knobs
   "mcpServers": {
     "investigation": {
       "type": "http",
-      "url": "http://localhost:8001/mcp"
+      "url": "http://localhost:8001/mcp",
+      "headers": { "Authorization": "Bearer <your MCP_AUTH_TOKEN>" }
     }
   }
 }
 ```
 
+Drop `headers` only for a loopback server with no `MCP_AUTH_TOKEN`.
 **Claude Desktop** — same shape in `claude_desktop_config.json`.
 
 ## Usage Examples
@@ -230,7 +249,11 @@ network I/O: SQL is parsed with `sqlglot` and rejected unless it's a single
 checked against a log-group allowlist, a time-window cap, and a bytes-scanned
 cost ceiling; NRQL is restricted to a single `SELECT` with no write-ish
 keywords and a clamped `LIMIT`. Results and any log messages are redacted
-before returning. See [`docs/design.md`](docs/design.md) §6 for the full model.
+(PII and credentials) before returning. Over HTTP, a bearer token
+(`MCP_AUTH_TOKEN`) and strict Host/Origin checks guard the endpoint, and every
+tool call and resource read is written as a structured audit event to the
+`investigation_server.audit` logger (stderr). The latest audit is in
+[`docs/security-audit.md`](docs/security-audit.md). See [`docs/design.md`](docs/design.md) §6 for the full model.
 
 ## Development
 

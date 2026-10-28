@@ -8,6 +8,7 @@ from opsinsight.integrations.newrelic.constants import (
     EPOCH_S_RE,
     LIMIT_RE,
     LITERAL_OR_COMMENT_RE,
+    MAX_NRQL_CHARS,
     RELATIVE_TIME_RE,
     SELECT_RE,
     SINCE_RE,
@@ -43,6 +44,11 @@ def validate_nrql(query: str, max_rows: int, requested_limit: int | None = None)
     stripped = query.strip()
     if not stripped:
         raise NewRelicGuardrailError(rule="empty_query", message="NRQL query must not be empty.")
+    if len(stripped) > MAX_NRQL_CHARS:
+        raise NewRelicGuardrailError(
+            rule="query_too_long",
+            message=f"NRQL is {len(stripped)} characters; the maximum is {MAX_NRQL_CHARS}.",
+        )
 
     masked, has_line_comment = _mask_literals_and_comments(stripped)
     if masked.endswith(";"):

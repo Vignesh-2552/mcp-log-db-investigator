@@ -11,7 +11,7 @@ from opsinsight.core.config import Settings
 from opsinsight.core.errors import ToolError
 from opsinsight.core.field_heuristics import CORRELATION_ID_RE as _CORRELATION_ID_RE
 from opsinsight.core.logging_config import get_logger
-from opsinsight.core.redaction import redact_log_event
+from opsinsight.core.redaction import redact_log_event, redact_row
 from opsinsight.integrations.cloudwatch.client import (
     get_logs_client,
     get_metrics_client,
@@ -26,6 +26,7 @@ from opsinsight.integrations.cloudwatch.guardrail import (
     check_bytes_scanned,
     clamp_window,
     poll_query_with_backoff,
+    validate_insights_query,
     validate_log_groups,
     validate_trace_field,
 )
@@ -103,12 +104,13 @@ class CloudWatchService(BaseService):
         return paths
 
     def _build_rows(self, results: list[list[dict]], include_ptr: bool) -> list[dict]:
+        # redact_row, not per-value redact_log_event: an Insights field named
+        # e.g. `api_key` or `password` must be masked by name, like DB columns.
         return [
-            {
-                field["field"]: redact_log_event(field["value"], self.settings)
-                for field in row
-                if include_ptr or field["field"] != "@ptr"
-            }
+            redact_row(
+                {field["field"]: field["value"] for field in row if include_ptr or field["field"] != "@ptr"},
+                self.settings,
+            )
             for row in results
         ]
 
@@ -128,6 +130,16 @@ class CloudWatchService(BaseService):
     def list_log_groups(self, prefix: str | None = None) -> dict:
         settings = self.settings
         allowlist = settings.cw_log_group_allowlist_set
+        if not allowlist:
+            # Fail closed, matching every other cw_* tool: with no allowlist
+            # nothing is queryable, so don't enumerate the account's log groups.
+            return self.ok(
+                {
+                    "log_groups": [],
+                    "note": "CLOUDWATCH_ALLOWED_LOG_GROUP is not set, so no log group is accessible.",
+                },
+                {"row_count": 0},
+            )
         try:
             client = self._logs_client()
             kwargs = {"logGroupNamePrefix": prefix} if prefix else {}
@@ -136,7 +148,7 @@ class CloudWatchService(BaseService):
             for page in paginator.paginate(**kwargs):
                 for g in page.get("logGroups", []):
                     name = g.get("logGroupName", "")
-                    if allowlist and name not in allowlist:
+                    if name not in allowlist:
                         continue
                     groups.append(
                         LogGroupSummary(
@@ -205,7 +217,9 @@ class CloudWatchService(BaseService):
 
             shapes: list[LogFieldShape] = []
             for _, cluster in sorted(clusters.items(), key=lambda kv: -kv[1]["row_count"]):
-                shape_id = hashlib.sha1(",".join(cluster["top_level_keys"]).encode()).hexdigest()[:8]
+                shape_id = hashlib.sha1(
+                    ",".join(cluster["top_level_keys"]).encode(), usedforsecurity=False
+                ).hexdigest()[:8]
                 fields = [
                     FieldFrequency(field=k, frequency=v)
                     for k, v in sorted(cluster["field_counts"].items(), key=lambda kv: -kv[1])
@@ -261,6 +275,7 @@ class CloudWatchService(BaseService):
         end_dt: datetime | None = None
         try:
             validate_log_groups(log_groups, settings.cw_log_group_allowlist_set)
+            validate_insights_query(query)
             start_dt, end_dt = clamp_window(
                 start, end, settings.cw_default_window_hours, settings.cw_max_window_hours
             )

@@ -16,7 +16,7 @@ audit.jsonl
 # Editor / AI-tool local config
 .claude/
 .cursor/
-.vscode/
+
 
 
 # Tool caches / scratch output

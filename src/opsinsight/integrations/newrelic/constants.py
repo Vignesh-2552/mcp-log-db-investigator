@@ -18,6 +18,9 @@ BLOCKED_KEYWORDS = ("DELETE", "INSERT", "UPDATE", "CREATE", "DROP", "ALTER", "GR
 
 EVENT_TYPE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
+# Longest NRQL accepted. Bounds the regex passes below on hostile input.
+MAX_NRQL_CHARS = 20_000
+
 # String literals ('...', "...", `...` with backslash escapes) and comments
 # (--, //, /* */).
 LITERAL_OR_COMMENT_RE = re.compile(

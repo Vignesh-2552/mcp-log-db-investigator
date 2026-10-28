@@ -24,4 +24,8 @@ ENV SERVER_HOST=0.0.0.0 \
 
 EXPOSE 8000
 
+# Run as an unprivileged user; the app only reads /app at runtime.
+RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin app
+USER app
+
 CMD ["investigation-server"]

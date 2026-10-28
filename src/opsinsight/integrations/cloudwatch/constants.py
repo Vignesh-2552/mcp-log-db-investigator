@@ -9,6 +9,13 @@ RUNNING_STATUSES = frozenset({"Running", "Scheduled"})
 
 TRACE_FIELD_RE = re.compile(r"^[A-Za-z_@][A-Za-z0-9_.]*$")
 
+# `SOURCE logGroups(...)` as the query's first command (optionally after
+# comment lines) chooses log groups from inside the query text.
+SOURCE_COMMAND_RE = re.compile(r"^(?:\s*#[^\n]*\n)*\s*SOURCE\b", re.IGNORECASE)
+
+# AWS's own Logs Insights query-string limit.
+MAX_INSIGHTS_QUERY_CHARS = 10_000
+
 # Hard cap on `limit` passed to filter_log_events, not caller-configurable.
 FILTER_EVENTS_CAP = 1000
 

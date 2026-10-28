@@ -388,7 +388,8 @@ Important:
 ### `cw_list_log_groups`
 
 Lists CloudWatch log groups visible to the configured AWS credentials,
-filtered by the configured allowlist.
+filtered by the configured allowlist. Returns an empty list (with a `note`) when
+`CLOUDWATCH_ALLOWED_LOG_GROUP` is unset.
 
 Inputs:
 
@@ -542,6 +543,10 @@ Success output:
 
 If the query is still running, the tool returns `status: "Running"` and a
 `query_id`.
+
+Guardrails: log groups must be allowlisted; the `SOURCE` command is rejected
+(`source_command_not_allowed`) so the query text can't pick other log groups;
+queries over 10,000 characters are rejected.
 
 ### `cw_get_trace_events`
 

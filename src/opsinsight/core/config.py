@@ -18,7 +18,9 @@ class Settings(BaseSettings):
     )
 
     # Database
-    db_url: str = "postgresql+asyncpg://localhost:5432/appdb"
+    # SecretStr: the DSN usually embeds the DB password, so keep it out of
+    # repr()/validation errors/logs. Read it via `db_dsn`.
+    db_url: SecretStr = SecretStr("postgresql+asyncpg://localhost:5432/appdb")
     db_max_rows: int = 500
     db_statement_timeout_ms: int = 15000
     db_idle_txn_timeout_ms: int = 30000
@@ -49,11 +51,21 @@ class Settings(BaseSettings):
     nr_max_rows: int = 500
 
     # Server
-    # Keep the unauthenticated HTTP transport local by default. Operators who
-    # deliberately expose it through an authenticated proxy can override this.
+    # Loopback by default. Binding anywhere else requires MCP_AUTH_TOKEN (or an
+    # explicit ALLOW_UNAUTHENTICATED_HTTP=true for deployments behind an
+    # authenticating proxy) — see core/transport_security.py.
     server_host: str = "127.0.0.1"
     server_port: int = 8001
     server_path: str = "/mcp"
+    # Bearer token required on every HTTP request when set. Ignored for stdio,
+    # which trusts the local process that launched it.
+    mcp_auth_token: SecretStr | None = None
+    allow_unauthenticated_http: bool = False
+    # Extra Host header values (comma-separated, e.g. "mcp.example.com") and
+    # browser Origins accepted by the HTTP transport's DNS-rebinding guard, on
+    # top of localhost/127.0.0.1/::1 and same-origin requests.
+    server_allowed_hosts: str = ""
+    server_allowed_origins: str = ""
     # Unset → each entry point's default: `investigation-server` serves HTTP
     # (Docker/hosted), `opsinsight-mcp` speaks stdio (launched by the client via uvx).
     mcp_transport: Literal["streamable-http", "stdio"] | None = None
@@ -120,7 +132,15 @@ class Settings(BaseSettings):
 
     @property
     def db_dsn(self) -> str:
-        return self.db_url
+        return self.db_url.get_secret_value()
+
+    @property
+    def server_allowed_hosts_list(self) -> list[str]:
+        return [item.strip() for item in self.server_allowed_hosts.split(",") if item.strip()]
+
+    @property
+    def server_allowed_origins_list(self) -> list[str]:
+        return [item.strip() for item in self.server_allowed_origins.split(",") if item.strip()]
 
     @property
     def db_store_identifier_columns_set(self) -> frozenset[str]:

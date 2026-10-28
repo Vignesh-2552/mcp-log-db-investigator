@@ -1,5 +1,14 @@
+import pytest
+
 from opsinsight.core.config import Settings
 from opsinsight.core.redaction import redact_log_event, redact_row, redact_text
+
+# Synthetic credential-shaped fixtures, assembled at runtime so no literal in
+# the source matches a secret scanner's pattern (GitHub push protection
+# ignores gitleaks:allow comments).
+_FAKE_AWS_KEY_ID = "AKIA" + "ABCDEFGHIJKLMNOP"
+_FAKE_NR_KEY = "NRAK-" + "ABCDEFGHIJKLMNOPQRSTUVWXYZ1"
+_FAKE_JWT = "eyJhbGciOiJIUzI1NiJ9" + "." + "eyJzdWIiOiIxIn0" + "." + "c2lnbmF0dXJl"
 
 _ENABLED = Settings(pii_redaction=True)
 _DISABLED = Settings(pii_redaction=False)
@@ -58,6 +67,41 @@ def test_phone_number_still_redacted_next_to_timestamp():
 def test_card_number_still_redacted_next_to_timestamp():
     result = redact_text("ts=1786538460000 card=4111111111111111")
     assert result == "ts=1786538460000 card=[REDACTED_CARD]"
+
+
+@pytest.mark.parametrize(
+    ("text", "leaked"),
+    [
+        ('{"user":"a","password":"hunter2 x"}', "hunter2"),
+        ("db_password=s3cr3t&next=1", "s3cr3t"),
+        ("client_secret: abcdef123456", "abcdef123456"),  # gitleaks:allow (synthetic fixture)
+        ("Authorization: Bearer abc.def-ghi_jkl", "abc.def-ghi_jkl"),
+        (f"call failed with bearer {_FAKE_JWT}", "eyJhbGci"),
+        (f"key {_FAKE_AWS_KEY_ID} used", _FAKE_AWS_KEY_ID),
+        (f"nr key {_FAKE_NR_KEY} rejected", _FAKE_NR_KEY),
+        ("-----BEGIN RSA PRIVATE KEY-----\nMIIEow\n-----END RSA PRIVATE KEY-----", "MIIEow"),
+    ],
+)
+def test_secrets_in_text_are_redacted(text, leaked):
+    result = redact_text(text)
+    assert leaked not in result
+    assert "[REDACTED_SECRET]" in result
+
+
+def test_secret_key_value_keeps_key_and_quotes():
+    assert redact_text('{"api_key": "abc123"}') == '{"api_key": "[REDACTED_SECRET]"}'
+
+
+def test_non_secret_keys_untouched():
+    text = "token_count=42 status=ok"
+    assert redact_text(text) == text
+
+
+@pytest.mark.parametrize(
+    "column", ["api_key", "client_secret", "stripe_token", "db_password", "Private_Key", "session_cookie"]
+)
+def test_sensitive_column_names_masked_by_substring(column):
+    assert redact_row({column: "value"}, _ENABLED)[column] == "[REDACTED]"
 
 
 def test_redact_row_still_masks_pii_column_names():
