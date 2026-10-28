@@ -51,6 +51,7 @@ def clamp_and_inject_limit(
 ) -> tuple[exp.Expression, int]:
     """Injects LIMIT if absent, clamps it to `max_rows` otherwise.
 
+    For a UNION/INTERSECT/EXCEPT root the LIMIT caps the combined result.
     Applies to the outer SELECT of a WITH...SELECT tree only — sqlglot
     represents the outer select and its CTEs' select bodies as separate
     nodes, so setting `tree`'s own `limit` arg never touches CTE internals.
@@ -113,11 +114,13 @@ def validate_sql(
 
     tree = statements[0]
 
-    if not isinstance(tree, (exp.Select, exp.With)):
+    # SetOperation covers UNION / INTERSECT / EXCEPT of SELECTs; its branches
+    # are walked by the same blocked-node/function checks below.
+    if not isinstance(tree, (exp.Select, exp.With, exp.SetOperation)):
         logger.warning("SQL validation failed (rule=root_not_select): Root node was %s", type(tree).__name__)
         raise GuardrailError(
             rule="root_not_select",
-            message="Only SELECT and WITH ... SELECT statements are permitted.",
+            message="Only SELECT, WITH ... SELECT and UNION/INTERSECT/EXCEPT of SELECTs are permitted.",
             detail=f"Root node was {type(tree).__name__}.",
         )
 

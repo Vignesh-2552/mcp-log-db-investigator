@@ -4,6 +4,7 @@ from typing import Any
 
 from sqlalchemy import inspect, text
 from sqlalchemy.exc import DataError
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from opsinsight.core.cache import ttl_cache
 from opsinsight.core.config import Settings, get_settings
@@ -72,13 +73,16 @@ def _sync_describe_table(sync_conn, name: str, schema: str | None) -> dict[str, 
     }
 
 
+# Catalog lookups below take the engine as their first argument so the TTL
+# cache is keyed per database: two Settings pointing at different DSNs never
+# share cached catalog results.
+
+
 @ttl_cache(maxsize=8, ttl_seconds=lambda: get_settings().db_schema_cache_ttl_s)
-async def _list_tables_cached(schema: str | None) -> list[TableSummary]:
+async def _list_tables_cached(engine: AsyncEngine, schema: str | None) -> list[TableSummary]:
     """One round-trip regardless of table count (was 2 * N round-trips
     before — fine on local Postgres, painfully slow over a real network
     to a remote DB with dozens/hundreds of tables)."""
-    settings = get_settings()
-    engine = get_engine(settings)
     async with engine.connect() as conn:
         result = await conn.execute(text(LIST_TABLES_SQL), {"schema": schema})
         rows = result.mappings().all()
@@ -92,15 +96,15 @@ async def _list_tables_cached(schema: str | None) -> list[TableSummary]:
     ]
 
 
-async def list_tables(schema: str | None) -> list[TableSummary]:
+async def list_tables(schema: str | None, settings: Settings | None = None) -> list[TableSummary]:
     """Cached for the configured DB_SCHEMA_CACHE_TTL_S."""
-    return await _list_tables_cached(schema)
+    return await _list_tables_cached(get_engine(settings), schema)
 
 
-async def describe_table(table: str) -> TableDescription:
+async def describe_table(table: str, settings: Settings | None = None) -> TableDescription:
     schema, name = _split_table(table)
     qualified = _qualify(schema, name)
-    engine = get_engine()
+    engine = get_engine(settings)
     async with engine.connect() as conn:
         detail = await conn.run_sync(_sync_describe_table, name, schema)
     pk = detail["primary_key"]
@@ -171,18 +175,18 @@ def _entity_name_candidates(id_type: str) -> list[str]:
 
 
 @ttl_cache(maxsize=64, ttl_seconds=lambda: get_settings().db_schema_cache_ttl_s)
-async def _find_tables_with_column(column_name: str) -> list[tuple[str, str]]:
-    engine = get_engine()
+async def _find_tables_with_column(engine: AsyncEngine, column_name: str) -> list[tuple[str, str]]:
     async with engine.connect() as conn:
         result = await conn.execute(text(COLUMN_SEARCH_SQL), {"column_name": column_name})
         return [(row.schema, row.table_name) for row in result]
 
 
 @ttl_cache(maxsize=64, ttl_seconds=lambda: get_settings().db_schema_cache_ttl_s)
-async def _find_entity_tables(entity_candidates: tuple[str, ...]) -> list[tuple[str, str, str]]:
+async def _find_entity_tables(
+    engine: AsyncEngine, entity_candidates: tuple[str, ...]
+) -> list[tuple[str, str, str]]:
     if not entity_candidates:
         return []
-    engine = get_engine()
     async with engine.connect() as conn:
         result = await conn.execute(text(ENTITY_TABLE_SQL), {"table_names": list(entity_candidates)})
         return [(row.schema, row.table_name, row.pk_column) for row in result]
@@ -218,10 +222,11 @@ async def search_by_identifier(
 ) -> IdentifierSearchResult:
     settings = settings or get_settings()
     historical_prefixes = settings.db_historical_schema_prefixes_set
+    engine = get_engine(settings)
 
     column_matches, entity_matches = await asyncio.gather(
-        _find_tables_with_column(id_type),
-        _find_entity_tables(tuple(_entity_name_candidates(id_type))),
+        _find_tables_with_column(engine, id_type),
+        _find_entity_tables(engine, tuple(_entity_name_candidates(id_type))),
     )
 
     # Entity matches first — e.g. for id_type="order_id" the "orders" table
@@ -256,8 +261,6 @@ async def search_by_identifier(
 
     truncated = len(targets) > MAX_SEARCH_TARGETS
     targets = targets[:MAX_SEARCH_TARGETS]
-
-    engine = get_engine(settings)
 
     async def _search_one(schema: str, table: str, column: str) -> _Probe:
         qualified = f"{schema}.{table}"
@@ -374,8 +377,9 @@ def _domain_search_variants(name_or_domain: str) -> list[str]:
 
 
 @ttl_cache(maxsize=8, ttl_seconds=lambda: get_settings().db_schema_cache_ttl_s)
-async def _find_store_identifier_columns(column_names: tuple[str, ...]) -> list[tuple[str, str, str]]:
-    engine = get_engine()
+async def _find_store_identifier_columns(
+    engine: AsyncEngine, column_names: tuple[str, ...]
+) -> list[tuple[str, str, str]]:
     async with engine.connect() as conn:
         result = await conn.execute(text(STORE_COLUMN_SEARCH_SQL), {"column_names": list(column_names)})
         return [(row.schema, row.table_name, row.column_name) for row in result]
@@ -384,7 +388,8 @@ async def _find_store_identifier_columns(column_names: tuple[str, ...]) -> list[
 async def resolve_store(name_or_domain: str, settings: Settings | None = None) -> StoreResolutionResult:
     settings = settings or get_settings()
     columns = tuple(sorted(settings.db_store_identifier_columns_set))
-    targets = await _find_store_identifier_columns(columns)
+    engine = get_engine(settings)
+    targets = await _find_store_identifier_columns(engine, columns)
 
     if not targets:
         raise GuardrailError(
@@ -399,7 +404,6 @@ async def resolve_store(name_or_domain: str, settings: Settings | None = None) -
     truncated = len(targets) > MAX_SEARCH_TARGETS
     targets = targets[:MAX_SEARCH_TARGETS]
     variants = _domain_search_variants(name_or_domain)
-    engine = get_engine(settings)
 
     async def _search_one(schema: str, table: str, column: str) -> _Probe:
         qualified = f"{schema}.{table}"

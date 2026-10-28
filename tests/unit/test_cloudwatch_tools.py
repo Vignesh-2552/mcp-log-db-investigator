@@ -204,3 +204,20 @@ def test_get_trace_events_builds_and_executes_query():
     assert result["data"]["value"] == 'has "quote'
     assert 'filter trace_id = "has \\"quote"' in result["data"]["executed_query"]
     assert result["data"]["rows"] == [{"@timestamp": "t1"}]
+
+
+def test_logs_client_is_cached_per_credential_set(monkeypatch: pytest.MonkeyPatch):
+    from unittest.mock import Mock
+
+    from opsinsight.core.config import Settings
+    from opsinsight.integrations.cloudwatch import client as client_module
+
+    monkeypatch.setattr(client_module, "_session", lambda settings: Mock())
+    client_module.reset_clients()
+    mumbai = Settings(_env_file=None, cloudwatch_region="ap-south-1")
+    virginia = Settings(_env_file=None, cloudwatch_region="us-east-1")
+
+    assert client_module.get_logs_client(mumbai) is client_module.get_logs_client(mumbai)
+    assert client_module.get_logs_client(mumbai) is not client_module.get_logs_client(virginia)
+    assert client_module.get_logs_client(mumbai) is not client_module.get_metrics_client(mumbai)
+    client_module.reset_clients()

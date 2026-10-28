@@ -13,11 +13,18 @@ _PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("PHONE", re.compile(r"\b(?:\+?\d{1,3}[\s-]?)?\d{10}\b")),
 ]
 
-# UUIDs are hyphen-delimited digit runs, so CARD/AADHAAR can partially match
-# inside one (a hyphen is a non-word char, so \b fires right after it). Protect
-# UUID-shaped substrings with placeholders before running the pattern list.
-_UUID_RE = re.compile(
+# Substrings the PII patterns would wrongly mask, protected with placeholders
+# before running the pattern list:
+# - UUIDs are hyphen-delimited digit runs, so CARD/AADHAAR can partially match
+#   inside one (a hyphen is a non-word char, so \b fires right after it).
+# - Unix epoch timestamps: 10-digit seconds match PHONE and 13-digit millis
+#   match CARD, which would blank out the timestamps needed to correlate
+#   events. Only runs starting with "1" (2001-2033) are protected; phone
+#   numbers (US, India) and Aadhaar numbers never start with 1, and neither
+#   do 13-digit card numbers.
+_PROTECTED_RE = re.compile(
     r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
+    r"|\b1\d{9}(?:\d{3})?\b"
 )
 
 PII_COLUMN_NAMES = {
@@ -46,21 +53,18 @@ def enabled(settings: Settings | None = None) -> bool:
 
 
 def redact_text(value: str) -> str:
-    uuids = _UUID_RE.findall(value)
-    if not uuids:
-        for label, pattern in _PATTERNS:
-            value = pattern.sub(f"[REDACTED_{label}]", value)
-        return value
+    originals: list[str] = []
 
-    protected = value
-    placeholders = [f"\x00UUID{i}\x00" for i in range(len(uuids))]
-    for placeholder, original in zip(placeholders, uuids):
-        protected = protected.replace(original, placeholder, 1)
+    def _protect(match: re.Match[str]) -> str:
+        originals.append(match.group())
+        return f"\x00P{len(originals) - 1}\x00"
+
+    protected = _PROTECTED_RE.sub(_protect, value)
     for label, pattern in _PATTERNS:
         protected = pattern.sub(f"[REDACTED_{label}]", protected)
-    for placeholder, original in zip(placeholders, uuids):
-        protected = protected.replace(placeholder, original, 1)
-    return protected
+    if not originals:
+        return protected
+    return re.sub(r"\x00P(\d+)\x00", lambda m: originals[int(m.group(1))], protected)
 
 
 def redact_row(row: dict[str, Any], settings: Settings | None = None) -> dict[str, Any]:

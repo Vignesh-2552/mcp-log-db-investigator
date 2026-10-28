@@ -215,7 +215,7 @@ Success output:
 Guardrails:
 
 - Only one statement is allowed.
-- Only `SELECT` and `WITH ... SELECT` are allowed.
+- Only `SELECT`, `WITH ... SELECT` and `UNION`/`INTERSECT`/`EXCEPT` of selects are allowed.
 - DDL/DML commands are rejected.
 - Dangerous Postgres functions are rejected.
 - A `LIMIT` is injected or clamped.
@@ -819,8 +819,9 @@ Guardrails:
 
 - Query must start with `SELECT`.
 - Multiple statements are rejected.
-- Write-like keywords are rejected.
-- `LIMIT` is injected or clamped.
+- Write-like keywords are rejected (text inside quoted strings is ignored).
+- `LIMIT` is injected or clamped (`LIMIT MAX` included).
+- The `SINCE`/`UNTIL` window is capped at `NR_MAX_WINDOW_HOURS`; with no `SINCE`, `SINCE <NR_DEFAULT_WINDOW_HOURS> hours ago` is added. Use `SINCE <n> minutes|hours|days ago`, `today`/`yesterday`, epoch millis, or a quoted date.
 
 ## MCP Resources
 

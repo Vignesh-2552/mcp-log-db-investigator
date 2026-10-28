@@ -7,24 +7,27 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from opsinsight.core.config import get_settings
 from opsinsight.core.container import reset_container
+from opsinsight.integrations.cloudwatch.client import reset_clients
 from opsinsight.integrations.database.engine import reset_engine
 
 
 @pytest.fixture
 async def settings_override(monkeypatch: pytest.MonkeyPatch):
-    """Monkeypatch env vars and clear the Settings/engine/container caches so
-    each test gets a fresh, isolated configuration."""
+    """Monkeypatch env vars and clear the Settings/engine/CloudWatch-client/
+    container caches so each test gets a fresh, isolated configuration."""
 
     async def _apply(**env: str) -> None:
         for key, value in env.items():
             monkeypatch.setenv(key.upper(), value)
         get_settings.cache_clear()
         reset_container()
+        reset_clients()
         await reset_engine()
 
     yield _apply
     get_settings.cache_clear()
     reset_container()
+    reset_clients()
     await reset_engine()
 
 

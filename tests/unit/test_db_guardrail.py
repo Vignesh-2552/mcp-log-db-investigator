@@ -99,6 +99,21 @@ def test_cte_limit_applies_to_outer_select_only():
     assert result.sql.upper().count("LIMIT") == 1
 
 
+@pytest.mark.parametrize("op", ["UNION", "UNION ALL", "INTERSECT", "EXCEPT"])
+def test_set_operations_allowed_with_limit_on_combined_result(op):
+    sql = f"SELECT id FROM public.orders {op} SELECT order_id FROM public.payments"
+    result = validate_sql(sql, max_rows=500, requested_limit=20)
+    assert set(result.tables) == {"public.orders", "public.payments"}
+    assert result.sql.upper().endswith("LIMIT 20")
+    assert result.sql.upper().count("LIMIT") == 1
+
+
+def test_set_operation_branch_still_checked_for_blocked_functions():
+    with pytest.raises(GuardrailError) as exc:
+        validate_sql("SELECT 1 UNION SELECT pg_sleep(5)", max_rows=500)
+    assert exc.value.rule == "blocked_function"
+
+
 def test_parse_error_rejected():
     with pytest.raises(GuardrailError) as exc:
         validate_sql("SELEKT * FRM orders", max_rows=500)

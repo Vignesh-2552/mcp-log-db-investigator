@@ -40,6 +40,26 @@ def test_duplicate_uuid_appears_twice_and_both_preserved():
     assert result.count(uuid) == 2
 
 
+def test_epoch_seconds_timestamp_is_not_redacted():
+    text = '{"ts":1786538460,"level":"error"}'
+    assert redact_text(text) == text
+
+
+def test_epoch_millis_timestamp_is_not_redacted():
+    text = "event at 1786538460000 failed"
+    assert redact_text(text) == text
+
+
+def test_phone_number_still_redacted_next_to_timestamp():
+    result = redact_text("ts=1786538460 phone=9876543210")
+    assert result == "ts=1786538460 phone=[REDACTED_PHONE]"
+
+
+def test_card_number_still_redacted_next_to_timestamp():
+    result = redact_text("ts=1786538460000 card=4111111111111111")
+    assert result == "ts=1786538460000 card=[REDACTED_CARD]"
+
+
 def test_redact_row_still_masks_pii_column_names():
     row = {"id": "00000000-0000-0000-0000-000000000000", "email": "someone@example.com"}
     result = redact_row(row, _ENABLED)

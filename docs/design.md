@@ -165,7 +165,7 @@ There is **no application-level table allowlist**. Any table the dedicated read-
 |---|---|---|---|
 | `nr_list_event_types` | `hours: int = 24` | event types with data in the window | `SHOW EVENT TYPES` — bypasses the SELECT-only NRQL guardrail on purpose |
 | `nr_describe_log_fields` | `event_type: str = "Log"`, `hours: int = 1` | `keyset()` fields + likely trace/correlation-id attributes | Grounding tool; guessing NR attribute names is the #1 cause of empty results |
-| `nr_run_nrql_query` | `query: str`, `limit: int = 100` | rows, executed query, NerdGraph metadata | **Validated** — see §6.3. `LIMIT` injected/clamped. |
+| `nr_run_nrql_query` | `query: str`, `limit: int = 100` | rows, executed query, NerdGraph metadata | **Validated** — see §6.3. `LIMIT` injected/clamped; `SINCE`/`UNTIL` window capped. |
 
 ### 4.4 Resources
 
@@ -228,7 +228,7 @@ This is the section that must not be compromised — the server has production d
 - **AST validation** before execution using `sqlglot` (`integrations/database/guardrail.py`):
   - Parse the statement. Reject if it fails to parse.
   - Reject if more than one statement (blocks `; DROP TABLE`).
-  - Allow only `SELECT` and `WITH ... SELECT` root nodes.
+  - Allow only `SELECT`, `WITH ... SELECT` and `UNION` / `INTERSECT` / `EXCEPT` of selects as root nodes (every branch goes through the checks below).
   - Reject any node type in the denylist (`INSERT`, `UPDATE`, `DELETE`, `MERGE`, `CREATE`, `DROP`, `ALTER`, `GRANT`, `TRUNCATE`, `COPY`, `Command`).
   - Reject calls to dangerous functions (`pg_read_file`, `pg_read_binary_file`, `pg_ls_dir`, `pg_sleep`, `dblink`, `dblink_connect`, `lo_import`, `lo_export`, `pg_terminate_backend`, `pg_cancel_backend`).
   - CTE aliases are not treated as real tables when collecting referenced table names.
@@ -253,16 +253,18 @@ This is the section that must not be compromised — the server has production d
 
 NRQL has no AST parser comparable to sqlglot, so the guardrail is regex-based (`integrations/newrelic/guardrail.py`):
 
+- String literals and comments are masked before every check, so text inside `'...'` (e.g. `LIKE '%update failed%'`) never trips a rule.
 - Reject empty queries and stacked statements (`;`).
 - Require a leading `SELECT`.
 - Reject write-ish keywords (`DELETE`, `INSERT`, `UPDATE`, `CREATE`, `DROP`, `ALTER`, `GRANT`, `TRUNCATE`).
-- Inject/clamp `LIMIT` to `NR_MAX_ROWS` (default 500).
+- Inject/clamp `LIMIT` to `NR_MAX_ROWS` (default 500); `LIMIT MAX` is clamped too.
+- Cap the `SINCE`/`UNTIL` span at `NR_MAX_WINDOW_HOURS` (default 7 days) and inject `SINCE NR_DEFAULT_WINDOW_HOURS hours ago` (default 24) when there is no `SINCE`. Supported operands: `<n> <unit> ago`, `now`/`today`/`yesterday`, epoch seconds/millis, quoted ISO dates; anything else is rejected (`unsupported_time_range`).
 
 This is a first line of defence, not as rigorous as the SQL guardrail. It is good enough because the NerdGraph `nrql` field itself only accepts queries, not mutations (alert creation etc. go through other GraphQL operations). Credentials: `NEW_RELIC_API_KEY` (user key, `NRAK-...`) + `NEW_RELIC_ACCOUNT_ID`; region `us` or `eu` selects the GraphQL endpoint.
 
 ### 6.4 Data Protection
 
-- **PII redaction** in the response path (`core/redaction.py`), applied at the tool/service boundary, not deeper in the stack: column-name masking (`PII_COLUMN_NAMES`) plus regex patterns (email / card / Aadhaar / PAN / phone) applied to both DB/NRQL row values and raw log message text. UUIDs are protected from the card/Aadhaar patterns so they are not partially redacted. Toggle: `PII_REDACTION` (default on).
+- **PII redaction** in the response path (`core/redaction.py`), applied at the tool/service boundary, not deeper in the stack: column-name masking (`PII_COLUMN_NAMES`) plus regex patterns (email / card / Aadhaar / PAN / phone) applied to both DB/NRQL row values and raw log message text. UUIDs and Unix epoch timestamps (10-digit seconds / 13-digit millis starting with `1`) are protected from the card/phone/Aadhaar patterns so they are not redacted. Toggle: `PII_REDACTION` (default on).
 - **No secrets in tool arguments.** Credentials come from environment / AWS profile only.
 - **Server-side logging** to stderr (`core/logging_config.py`). Operational logs capture guardrail decisions and errors so issues can be debugged without exposing sensitive data as tool results. Stderr is used so the stdio transport keeps stdout free for JSON-RPC.
 

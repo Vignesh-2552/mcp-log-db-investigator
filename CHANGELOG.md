@@ -15,6 +15,23 @@ to PyPI only once, so every release gets a new number.
   logo formats and the completed `docs/packaging-plan.md` (superseded by this
   changelog and `docs/roadmap.md`).
 - `.python-version` set to 3.13 to match CI and the Docker image.
+- `nr_run_nrql_query` now enforces `NR_MAX_WINDOW_HOURS` on the query's `SINCE`/`UNTIL`
+  span and adds `SINCE <NR_DEFAULT_WINDOW_HOURS> hours ago` when the query has none.
+  Unrecognised `SINCE` forms return `unsupported_time_range`.
+- `db_run_query`/`db_explain_query` accept `UNION`, `INTERSECT` and `EXCEPT` of selects.
+- The Docker image pins `uv` (0.11.16) instead of `latest`.
+
+### Fixed
+- PII redaction no longer masks Unix epoch timestamps in log text (10-digit seconds
+  were redacted as phone numbers, 13-digit millis as card numbers).
+- The NRQL guardrail no longer rejects queries whose string literals contain a
+  blocked keyword or `;` (e.g. `WHERE message LIKE '%update failed%'`), handles
+  `LIMIT MAX`, and no longer appends `LIMIT` inside a trailing `--` comment.
+- Services built with an override `Settings` now really use it: the DB engine and
+  CloudWatch clients are cached per configuration instead of one process-wide
+  instance, and schema introspection uses the service's settings.
+- `schema://db/tables` and `schema://db/table/{name}` return a structured error
+  instead of raising when the database is unreachable.
 
 ## [0.1.1] - 2026-10-28
 

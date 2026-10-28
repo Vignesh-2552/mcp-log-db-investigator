@@ -125,14 +125,16 @@ package must already be listed in `src/opsinsight/tools/__init__.py`) or it will
 **Errors are structured and self-correcting by design**: every guardrail raises a `ToolError`
 subclass (`GuardrailError`, `CWGuardrailError`, `NewRelicGuardrailError` in `core/errors.py`)
 carrying a machine-readable `rule` plus a `detail` string explaining what to change — never a
-bare "denied". Every `@mcp.tool()` function catches its own `ToolError`s and converts them via
-`.to_response()` into `{"ok": False, "error": {...}}`; successful results always follow
-`{"ok": True, "data": {...}, "meta": {...}}`. Preserve this shape in any new tool.
+bare "denied". The service method behind each tool (not the one-line tool file) catches
+`ToolError`s and converts them via `.to_response()` into `{"ok": False, "error": {...}}`;
+successful results always follow `{"ok": True, "data": {...}, "meta": {...}}` (built with
+`BaseService.ok`). Preserve this shape in any new tool.
 
 **Settings are one `pydantic-settings` object** (`core/config.py`), loaded once via
 `@lru_cache def get_settings()`. Tests that change env vars must call
 `get_settings.cache_clear()` (and, for DB tests, `await reset_engine()` from
-`integrations/database/engine.py`) — see `tests/conftest.py`'s `settings_override` fixture
+`integrations/database/engine.py`; for real boto3 clients, `reset_clients()` from
+`integrations/cloudwatch/client.py`) — see `tests/conftest.py`'s `settings_override` fixture
 and `tests/unit/test_newrelic_tools.py` for the pattern. Unit tests construct the service
 class directly (`CloudWatchService(get_settings(), logs_client_factory=lambda s: fake_client)`,
 `NewRelicService(get_settings(), run_nrql_fn=fake_run_nrql)`) rather than monkeypatching —
@@ -156,8 +158,20 @@ repeated bad queries, add/update a cookbook entry rather than only fixing it in 
 reports if `bytesScanned` exceeds `CW_MAX_BYTES_SCANNED` — bytes scanned is always logged and
 returned in `meta`, since Logs Insights bills per GB scanned.
 
-**DB safety is defense-in-depth**: `sqlglot`-based AST validation (single `SELECT`/`WITH...SELECT`
-only, blocked node types, blocked dangerous functions, LIMIT injection/clamping) in
+**Engines and clients are cached per configuration, not globally**: `get_engine(settings)` keys
+on DSN + session timeouts and `get_logs_client`/`get_metrics_client` key on region + credentials,
+so a service built with an override `Settings` really talks to that DB/account. `introspect.*`
+takes `settings` and passes the engine into its TTL-cached catalog helpers, so cached catalog
+results are per-database too.
+
+**NRQL guardrail masks literals first**: `validate_nrql`/`enforce_nrql_window` run their regexes
+over the query with string literals and comments blanked out (same length, so offsets map back),
+so `WHERE message LIKE '%update;%'` isn't rejected. `nr_run_nrql_query` also caps the
+`SINCE`/`UNTIL` span at `NR_MAX_WINDOW_HOURS` and injects `SINCE NR_DEFAULT_WINDOW_HOURS hours
+ago` when absent; unparseable `SINCE` forms are rejected (`unsupported_time_range`).
+
+**DB safety is defense-in-depth**: `sqlglot`-based AST validation (single `SELECT`/`WITH...SELECT`/
+`UNION`/`INTERSECT`/`EXCEPT` only, blocked node types, blocked dangerous functions, LIMIT injection/clamping) in
 `integrations/database/guardrail.py`, *plus* session-level hardening applied on every new
 physical connection in `integrations/database/engine.py` (`SET default_transaction_read_only
 = on`, statement timeout, idle-in-transaction timeout) — the DB role itself is meant to be the

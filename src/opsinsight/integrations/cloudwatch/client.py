@@ -5,8 +5,10 @@ from opsinsight.core.logging_config import get_logger
 
 logger = get_logger("cloudwatch.client")
 
-_logs_client = None
-_metrics_client = None
+# Keyed by the settings that shape the boto3 session (see _client_key), so a
+# service built with different Settings gets its own client instead of
+# silently reusing whichever one was created first.
+_clients: dict[tuple, object] = {}
 
 
 def _auth_mode(settings: Settings) -> str:
@@ -34,37 +36,44 @@ def _session(settings: Settings) -> boto3.Session:
     return boto3.Session(profile_name=settings.aws_profile, region_name=settings.cloudwatch_effective_region)
 
 
-def get_logs_client(settings: Settings | None = None):
-    """Lazily creates a boto3 CloudWatch Logs client."""
-    global _logs_client
-    if _logs_client is None:
-        settings = settings or get_settings()
+def _client_key(service_name: str, settings: Settings) -> tuple:
+    secret = settings.cloudwatch_effective_secret_access_key
+    return (
+        service_name,
+        settings.cloudwatch_effective_region,
+        settings.cloudwatch_effective_access_key_id,
+        secret.get_secret_value() if secret else None,
+        settings.aws_profile,
+    )
+
+
+def _get_client(service_name: str, label: str, settings: Settings | None):
+    settings = settings or get_settings()
+    key = _client_key(service_name, settings)
+    client = _clients.get(key)
+    if client is None:
         logger.info(
-            "Initializing boto3 CloudWatch Logs client (region=%s, auth=%s)",
+            "Initializing boto3 CloudWatch %s client (region=%s, auth=%s)",
+            label,
             settings.cloudwatch_effective_region,
             _auth_mode(settings),
         )
-        _logs_client = _session(settings).client("logs")
-    return _logs_client
+        client = _clients[key] = _session(settings).client(service_name)
+    return client
+
+
+def get_logs_client(settings: Settings | None = None):
+    """Lazily creates (and caches per credential set) a boto3 CloudWatch Logs client."""
+    return _get_client("logs", "Logs", settings)
 
 
 def get_metrics_client(settings: Settings | None = None):
-    global _metrics_client
-    if _metrics_client is None:
-        settings = settings or get_settings()
-        logger.info(
-            "Initializing boto3 CloudWatch Metrics client (region=%s, auth=%s)",
-            settings.cloudwatch_effective_region,
-            _auth_mode(settings),
-        )
-        _metrics_client = _session(settings).client("cloudwatch")
-    return _metrics_client
+    """Lazily creates (and caches per credential set) a boto3 CloudWatch Metrics client."""
+    return _get_client("cloudwatch", "Metrics", settings)
 
 
 def reset_clients() -> None:
     """Test helper to force client re-creation after settings change."""
-    global _logs_client, _metrics_client
-    if _logs_client is not None or _metrics_client is not None:
+    if _clients:
         logger.info("Resetting boto3 CloudWatch clients")
-    _logs_client = None
-    _metrics_client = None
+    _clients.clear()

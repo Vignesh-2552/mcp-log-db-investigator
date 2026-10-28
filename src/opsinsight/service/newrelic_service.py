@@ -8,7 +8,10 @@ from opsinsight.core.field_heuristics import CORRELATION_ID_RE as _CORRELATION_I
 from opsinsight.core.redaction import redact_rows
 from opsinsight.integrations.newrelic.client import run_nrql
 from opsinsight.integrations.newrelic.constants import EVENT_TYPE_RE
-from opsinsight.integrations.newrelic.guardrail import validate_nrql
+from opsinsight.integrations.newrelic.guardrail import (
+    enforce_nrql_window,
+    validate_nrql,
+)
 from opsinsight.integrations.newrelic.models import (
     EventTypesResult,
     LogFieldsResult,
@@ -110,7 +113,11 @@ class NewRelicService(BaseService):
     async def run_nrql_query(self, query: str, limit: int = 100) -> dict:
         settings = self.settings
         try:
-            validated_query = validate_nrql(query, settings.nr_max_rows, requested_limit=limit)
+            validated_query = enforce_nrql_window(
+                validate_nrql(query, settings.nr_max_rows, requested_limit=limit),
+                settings.nr_default_window_hours,
+                settings.nr_max_window_hours,
+            )
             result = await self._run_nrql(validated_query, settings)
         except ToolError as e:
             return e.to_response()

@@ -44,7 +44,7 @@ class DatabaseService(BaseService):
 
     async def list_tables(self, schema: str | None = None) -> dict:
         try:
-            tables = await introspect.list_tables(schema)
+            tables = await introspect.list_tables(schema, self.settings)
         except ToolError as e:
             return e.to_response()
         except SQLAlchemyError as e:
@@ -53,7 +53,7 @@ class DatabaseService(BaseService):
 
     async def describe_table(self, table: str) -> dict:
         try:
-            detail = await introspect.describe_table(table)
+            detail = await introspect.describe_table(table, self.settings)
         except ToolError as e:
             return e.to_response()
         except SQLAlchemyError as e:

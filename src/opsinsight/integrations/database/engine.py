@@ -10,7 +10,10 @@ from opsinsight.core.logging_config import get_logger
 
 logger = get_logger("database.engine")
 
-_engine: AsyncEngine | None = None
+# Keyed by DSN + session-hardening settings, so a service built with
+# different Settings gets its own engine instead of silently reusing
+# whichever one was created first.
+_engines: dict[tuple[str, int, int], AsyncEngine] = {}
 
 
 def _harden_session(engine: AsyncEngine, settings: Settings) -> None:
@@ -44,26 +47,28 @@ def _harden_session(engine: AsyncEngine, settings: Settings) -> None:
 
 
 def get_engine(settings: Settings | None = None) -> AsyncEngine:
-    global _engine
-    if _engine is None:
-        settings = settings or get_settings()
+    settings = settings or get_settings()
+    key = (settings.db_dsn, settings.db_statement_timeout_ms, settings.db_idle_txn_timeout_ms)
+    engine = _engines.get(key)
+    if engine is None:
         logger.info(
             "Initializing DB engine for DSN: %s",
             make_url(settings.db_dsn).render_as_string(hide_password=True),
         )
-        _engine = create_async_engine(settings.db_dsn, pool_pre_ping=True)
-        _harden_session(_engine, settings)
-    return _engine
+        engine = create_async_engine(settings.db_dsn, pool_pre_ping=True)
+        _harden_session(engine, settings)
+        _engines[key] = engine
+    return engine
 
 
 async def reset_engine() -> None:
-    """Test helper: dispose of the cached engine so the next get_engine()
+    """Test helper: dispose of every cached engine so the next get_engine()
     call picks up fresh settings."""
-    global _engine
-    if _engine is not None:
+    engines = list(_engines.values())
+    _engines.clear()
+    for engine in engines:
         logger.info("Disposing DB engine")
-        await _engine.dispose()
-    _engine = None
+        await engine.dispose()
 
 
 @asynccontextmanager
