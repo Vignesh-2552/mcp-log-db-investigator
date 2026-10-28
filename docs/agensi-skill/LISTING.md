@@ -23,8 +23,8 @@ This skill guides an agent through investigating a customer support ticket using
 **What's included:** SKILL.md workflow, tool reference, a query cookbook for each source, and example env/MCP client config files (placeholders only).
 
 **Requirements (disclosed up front)**
-- The skill does not contain the server. You run the open-source MIT server yourself: https://github.com/Vignesh-2552/mcp-log-db-investigator
-- Python with `uv`, plus a read-only Postgres role. AWS and New Relic credentials are optional and stay in your own environment; the skill never asks for credentials in chat.
+- The skill does not contain the server. It uses the open-source MIT server `opsinsight-mcp` (https://pypi.org/project/opsinsight-mcp/, source: https://github.com/Vignesh-2552/mcp-log-db-investigator).
+- Setup is one block in your MCP client config: the client runs `uvx opsinsight-mcp`, which downloads the server automatically. You need `uv` installed and a read-only Postgres role. AWS and New Relic credentials are optional and stay in your own environment; the skill never asks for credentials in chat.
 - The server is read-only (single SELECT only), masks PII, and caps CloudWatch scan cost.
 
 **Works with:** Claude Desktop, Claude Code, Cursor and other MCP clients.
