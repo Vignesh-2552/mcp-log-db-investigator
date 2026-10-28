@@ -1,6 +1,6 @@
 ---
 name: support-ticket-investigation
-description: Investigate customer support tickets across Postgres, AWS CloudWatch Logs and New Relic using a read-only Investigation MCP server. Teaches the discover-then-query workflow (list, describe, then query), cross-source correlation by request/order id, and how to read the server's guardrail errors. Requires you to run the MCP server yourself against your own credentials.
+description: Investigate customer support tickets across Postgres, AWS CloudWatch Logs and New Relic using a read-only Investigation MCP server. Teaches the discover-then-query workflow (list, describe, then query), cross-source correlation by request/order id, and how to read the server's guardrail errors. Requires the open-source opsinsight-mcp server (installed automatically with `uvx opsinsight-mcp`) configured with your own credentials.
 ---
 
 # Support Ticket Investigation
@@ -9,8 +9,11 @@ Use this skill when a user reports a support ticket ("checkout failed around 3pm
 and an **Investigation MCP server** is connected to the agent. The server exposes read-only tools for three
 sources: PostgreSQL (`db_*`), CloudWatch Logs (`cw_*`) and New Relic NRQL (`nr_*`).
 
-This skill does not contain the server. It assumes the user runs it with their own credentials. If the `db_*`,
-`cw_*` or `nr_*` tools are not available, stop and point the user to `reference/setup.md`.
+This skill does not contain the server. The user connects it with their own credentials: the server is the
+`opsinsight-mcp` package on PyPI, and the MCP client launches it with `uvx opsinsight-mcp`. If the `db_*`, `cw_*`
+or `nr_*` tools are not available, stop and point the user to `reference/setup.md`; the usual fix is adding
+`scripts/mcp-config.example.json` to their client config and restarting the client. If only one source's tools
+fail with a configuration error, that source's variables are missing; the other sources still work.
 
 ## Core rule: discover before you query
 

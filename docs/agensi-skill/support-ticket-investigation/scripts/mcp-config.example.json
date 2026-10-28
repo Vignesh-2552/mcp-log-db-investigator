@@ -1,8 +1,16 @@
 {
   "mcpServers": {
     "investigation": {
-      "url": "http://127.0.0.1:8001/mcp",
-      "headers": { "Authorization": "Bearer <YOUR_SHARED_SECRET_IF_ENABLED>" }
+      "command": "uvx",
+      "args": ["opsinsight-mcp"],
+      "env": {
+        "DB_URL": "postgresql+asyncpg://readonly_user:CHANGE_ME@host:5432/dbname",
+        "CLOUDWATCH_REGION": "us-east-1",
+        "CLOUDWATCH_ALLOWED_LOG_GROUP": "/app/prod",
+        "AWS_PROFILE": "readonly-profile",
+        "NEW_RELIC_API_KEY": "NRAK-CHANGE_ME",
+        "NEW_RELIC_ACCOUNT_ID": "CHANGE_ME"
+      }
     }
   }
 }
