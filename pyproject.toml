@@ -1,6 +1,6 @@
 [project]
 name = "opsinsight-mcp"
-version = "0.1.1"
+version = "0.2.0"
 description = "Read-only MCP server for support ticket investigation across PostgreSQL, AWS CloudWatch and New Relic"
 readme = "README.md"
 license = "MIT"
