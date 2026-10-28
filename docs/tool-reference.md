@@ -258,10 +258,21 @@ Success output:
     "executed_sql": "SELECT id, status FROM public.orders ORDER BY created_at DESC LIMIT 100"
   },
   "meta": {
-    "row_count": 1
+    "row_count": 1,
+    "truncated": false
   }
 }
 ```
+
+Load limits (shared by every row-returning DB tool: `db_run_query`, `db_sample_rows`,
+`db_search_by_identifier`):
+
+- Cells longer than `DB_MAX_CELL_BYTES` are cut.
+- If the rows' total JSON size exceeds `DB_MAX_RESPONSE_BYTES` (default 1 MB), the remaining
+  rows are dropped. `meta.truncated` is then `true` and `meta.truncation_note` says how many
+  rows were returned and how to narrow the query (fewer columns, `GROUP BY`, a tighter `WHERE`).
+- At most `DB_MAX_CONCURRENT_QUERIES` DB tool calls run at once. A call that waits longer than
+  `DB_QUEUE_TIMEOUT_S` for a slot returns `server_busy`, so retry after a few seconds.
 
 Use this for normal database investigation after checking schema with
 `db_describe_table`.

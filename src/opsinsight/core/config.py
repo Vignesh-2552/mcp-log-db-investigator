@@ -25,6 +25,15 @@ class Settings(BaseSettings):
     db_statement_timeout_ms: int = 15000
     db_idle_txn_timeout_ms: int = 30000
     db_max_cell_bytes: int = 4096
+    # Cap on the serialized size of the rows one DB tool call returns; rows
+    # past it are dropped and the response is marked truncated. Row/cell caps
+    # alone still allow ~100 MB (500 rows x many wide columns).
+    db_max_response_bytes: int = 1_000_000
+    # DB tool calls running at once (per server process). Further calls wait
+    # up to db_queue_timeout_s, then fail with `server_busy` instead of piling
+    # onto the connection pool.
+    db_max_concurrent_queries: int = 4
+    db_queue_timeout_s: float = 5.0
     db_schema_cache_ttl_s: int = 600
     db_store_identifier_columns: str = "domain,domain_name,hostname,host,store_name,slug,subdomain"
     db_historical_schema_prefixes: str = "migration"
@@ -69,6 +78,10 @@ class Settings(BaseSettings):
     # Unset → each entry point's default: `investigation-server` serves HTTP
     # (Docker/hosted), `opsinsight-mcp` speaks stdio (launched by the client via uvx).
     mcp_transport: Literal["streamable-http", "stdio"] | None = None
+    # Request rate limit across all clients (token bucket, every MCP request).
+    # RATE_LIMIT_RPS=0 disables it.
+    rate_limit_rps: float = 5.0
+    rate_limit_burst: int = 20
     pii_redaction: bool = True
     log_level: str = "INFO"
     log_format: str = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"

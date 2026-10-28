@@ -1,6 +1,7 @@
 import asyncio
+from collections.abc import Awaitable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypeVar
 
 from sqlalchemy import inspect, text
 from sqlalchemy.exc import DataError
@@ -13,6 +14,7 @@ from opsinsight.core.logging_config import get_logger
 from opsinsight.core.redaction import redact_rows
 from opsinsight.integrations.database.constants import (
     MAX_SEARCH_TARGETS,
+    SEARCH_FANOUT_CONCURRENCY,
     STORE_ID_KEYS,
     TLD_RE,
 )
@@ -47,6 +49,20 @@ from opsinsight.integrations.database.queries import (
 )
 
 logger = get_logger("database.introspect")
+
+_T = TypeVar("_T")
+
+
+async def _gather_bounded(coros: list[Awaitable[_T]], limit: int) -> list[_T]:
+    """asyncio.gather, but at most `limit` of the awaitables run at once —
+    each fan-out probe holds a pooled connection while it runs."""
+    slots = asyncio.Semaphore(limit)
+
+    async def _run(coro: Awaitable[_T]) -> _T:
+        async with slots:
+            return await coro
+
+    return await asyncio.gather(*(_run(c) for c in coros))
 
 
 def _split_table(table: str) -> tuple[str | None, str]:
@@ -315,8 +331,9 @@ async def search_by_identifier(
     # Each target gets its own pooled connection, run concurrently — with
     # up to MAX_SEARCH_TARGETS tables to check, doing this serially would
     # scale linearly with per-query network latency (25 tables x ~1s+ each
-    # over a real network is a genuinely bad wait).
-    probes = await asyncio.gather(*(_search_one(s, t, c) for s, t, c in targets))
+    # over a real network is a genuinely bad wait). Bounded so one call
+    # can't take the whole pool.
+    probes = await _gather_bounded([_search_one(s, t, c) for s, t, c in targets], SEARCH_FANOUT_CONCURRENCY)
     matches = [
         IdentifierMatch(table=p.table, column=p.column, source_type=p.source_type, rows=p.rows, row_count=p.row_count)
         for p in probes
@@ -448,7 +465,7 @@ async def resolve_store(name_or_domain: str, settings: Settings | None = None) -
             row_count=len(rows),
         )
 
-    probes = await asyncio.gather(*(_search_one(s, t, c) for s, t, c in targets))
+    probes = await _gather_bounded([_search_one(s, t, c) for s, t, c in targets], SEARCH_FANOUT_CONCURRENCY)
     matches = [p for p in probes if not p.skipped and p.row_count]
     skipped = [StoreSkip(table=p.table, column=p.column, reason=p.reason) for p in probes if p.skipped]
 

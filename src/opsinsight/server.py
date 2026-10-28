@@ -3,6 +3,7 @@ from opsinsight import tools as _tools  # noqa: F401
 from opsinsight.core.app import mcp
 from opsinsight.core.config import get_settings
 from opsinsight.core.logging_config import get_logger, setup_logging
+from opsinsight.core.rate_limit import build_rate_limiter
 from opsinsight.core.transport_security import (
     InsecureHttpConfigError,
     build_auth,
@@ -16,6 +17,17 @@ def run(default_transport: str) -> None:
     settings = get_settings()
     setup_logging(settings)
     transport = settings.mcp_transport or default_transport
+
+    rate_limiter = build_rate_limiter(settings)
+    if rate_limiter is not None:
+        mcp.add_middleware(rate_limiter)
+        logger.info(
+            "Rate limit: %.2f req/s, burst %d (global)",
+            rate_limiter.max_requests_per_second,
+            rate_limiter.burst_capacity,
+        )
+    else:
+        logger.warning("Rate limiting disabled (RATE_LIMIT_RPS=0)")
 
     if transport == "stdio":
         # stdout carries JSON-RPC in stdio mode; logging already goes to stderr.

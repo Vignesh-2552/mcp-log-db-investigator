@@ -271,3 +271,26 @@ raise the cap, rank better, or change the test.
 - **FAIL** = any open Critical/High.
 
 Result: **PASS WITH RISKS**.
+
+## Addendum (2026-10-28): load limits
+
+A follow-up review found that the server had **no request rate limit, no cap on total
+response size, and an unbounded search fan-out**:
+- Wide rows could make one `db_run_query` response about 100 MB (500 rows × many 4 KB cells).
+- `db_search_by_identifier` opened up to 25 connections in parallel per call, more than the connection pool holds (about 15).
+- A looping client could issue unlimited CloudWatch queries, each under the per-query bytes cap.
+
+All three are now limited:
+
+| Control | Setting (default) | Behavior when hit |
+|---|---|---|
+| Global request rate limit | `RATE_LIMIT_RPS` (5), `RATE_LIMIT_BURST` (20) | JSON-RPC "rate limit exceeded" error; still audited |
+| DB response byte budget | `DB_MAX_RESPONSE_BYTES` (1 MB) | Rows past the budget dropped; `meta.truncated` + `truncation_note` |
+| Concurrent DB tool calls | `DB_MAX_CONCURRENT_QUERIES` (4), `DB_QUEUE_TIMEOUT_S` (5) | `server_busy` error |
+| Search fan-out | `SEARCH_FANOUT_CONCURRENCY` (3) | Probes queue within the call |
+
+Tests: `tests/unit/test_db_load_limits.py` (14 tests). The unit suite now has 230 passing.
+Integration results are unchanged: 5 passed, plus the same pre-existing failure.
+
+The rate limit is global, not per user, because all HTTP clients share one token. This is
+the same constraint as R1.

@@ -85,6 +85,10 @@ MAX_SQL_CHARS = 50_000
 # Cap on number of tables searched per fan-out in search_by_identifier/resolve_store.
 MAX_SEARCH_TARGETS = 25
 
+# Targets probed concurrently per search_by_identifier/resolve_store call, so
+# one call can't hold more than this many pooled connections at once.
+SEARCH_FANOUT_CONCURRENCY = 3
+
 # Ordered candidate keys checked on matched rows to extract a store id in resolve_store.
 STORE_ID_KEYS = ("store_id", "id")
 

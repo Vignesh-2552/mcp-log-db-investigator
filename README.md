@@ -66,19 +66,76 @@ no composite "investigate this ticket end-to-end" tool yet (see
 
 ## Quick Start
 
-### Fastest: run the published package with `uvx`
+### Fastest: install and run with `uvx`
 
-No clone, no Docker, no port. Install [`uv`](https://docs.astral.sh/uv/getting-started/installation/),
-then add this to your MCP client config (Claude Desktop `claude_desktop_config.json`,
-Cursor `.cursor/mcp.json`). The client launches the server itself over stdio, and
-`uvx` downloads and caches the package on first run:
+You don't need to clone the repo, run Docker or open a port. Your MCP client
+starts the server itself over stdio with `uvx`. `uvx` downloads the package
+into an isolated environment the first time and reuses that copy afterwards.
+
+#### Step 1: Install `uv`
+
+`uvx` comes with [`uv`](https://docs.astral.sh/uv/getting-started/installation/).
+
+```powershell
+# Windows (PowerShell)
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+```bash
+# macOS / Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Open a **new** terminal, then check it:
+
+```powershell
+uv --version
+uvx --version
+```
+
+`uv` downloads a suitable Python (3.11+) if you don't have one.
+
+#### Step 2: Choose a version
+
+| Source | `args` value | When to use |
+|---|---|---|
+| PyPI release | `["opsinsight-mcp==0.1.1"]` | A stable, pinned version |
+| GitHub `main` | `["--from", "git+https://github.com/Vignesh-2552/mcp-log-db-investigator", "opsinsight-mcp"]` | The newest merged code |
+| A branch or tag | `["--from", "git+https://github.com/Vignesh-2552/mcp-log-db-investigator@<branch-or-tag>", "opsinsight-mcp"]` | Testing unreleased work |
+
+Changes listed under **Unreleased** in [`CHANGELOG.md`](CHANGELOG.md) aren't in
+the PyPI release yet. That includes the audit log, the load limits and the
+stricter SQL guardrail, so use the GitHub form if you need them.
+
+To check that the package installs (this downloads it and exits, without starting the server):
+
+```powershell
+uvx --from opsinsight-mcp==0.1.1 python -c "import importlib.metadata as m; print(m.version('opsinsight-mcp'))"
+```
+
+#### Step 3: Get credentials for the sources you use
+
+You only need the sources you plan to query. See
+[What each source needs](#what-each-source-needs). Use a **read-only** DB role or
+replica, an IAM user limited to your allowlisted log groups, and a New Relic
+**User** key (`NRAK-...`).
+
+#### Step 4: Add the server to your MCP client
+
+In this mode there's no `.env` file; the `env` block below is the whole configuration.
+Leave out the variables for sources you don't use.
+
+**Claude Desktop**: edit `claude_desktop_config.json`
+(Windows: `%APPDATA%\Claude\claude_desktop_config.json`, macOS:
+`~/Library/Application Support/Claude/claude_desktop_config.json`).
+**Cursor**: edit `.cursor/mcp.json` in your project, or `~/.cursor/mcp.json` for all projects.
 
 ```json
 {
   "mcpServers": {
     "investigation": {
       "command": "uvx",
-      "args": ["opsinsight-mcp"],
+      "args": ["opsinsight-mcp==0.1.1"],
       "env": {
         "DB_URL": "postgresql+asyncpg://readonly_user:pass@host:5432/dbname",
         "CLOUDWATCH_REGION": "ap-south-1",
@@ -93,12 +150,58 @@ Cursor `.cursor/mcp.json`). The client launches the server itself over stdio, an
 }
 ```
 
-Claude Code: `claude mcp add -e DB_URL=... investigation -- uvx opsinsight-mcp`.
+**Claude Code**: one command. Add one `-e` for each variable you need, and use
+`--scope user` to make it available in every project:
 
-Only set the variables for the sources you use (see
-[What each source needs](#what-each-source-needs)). In this mode there is no
-`.env` file — the `env` block is the configuration. To run an unreleased version
-straight from GitHub, use `"args": ["--from", "git+https://github.com/Vignesh-2552/mcp-log-db-investigator", "opsinsight-mcp"]`.
+```powershell
+claude mcp add investigation --scope user -e DB_URL=postgresql+asyncpg://readonly_user:pass@host:5432/dbname -- uvx opsinsight-mcp==0.1.1
+```
+
+Any tuning variable from `.env.example` can also go in `env`, for example
+`DB_MAX_ROWS`, `RATE_LIMIT_RPS` or `PII_REDACTION`.
+
+#### Step 5: Restart the client and test it
+
+1. Fully quit and reopen Claude Desktop or Cursor; closing the window isn't enough.
+2. Check that the `investigation` server shows **16 tools** (`db_*`, `cw_*`, `nr_*`).
+3. Ask a simple question, such as *"List the database tables"* (which calls
+   `db_list_tables`) or *"Which CloudWatch log groups can you read?"*.
+
+The first launch takes a little longer while `uvx` downloads the package.
+
+#### Updating
+
+- **Pinned version:** change the version in `args`, e.g. `opsinsight-mcp==0.1.2`, then restart the client.
+- **GitHub form:** add `"--refresh"` before `"--from"` once to fetch the newest commit, then remove it again.
+
+#### Optional: run as an HTTP server with `uvx`
+
+To run one shared HTTP server instead of a stdio process per client, use the
+`investigation-server` command. Run it from a folder that contains your `.env`,
+because settings load from `.env` in the current directory:
+
+```powershell
+uvx --from opsinsight-mcp==0.1.1 investigation-server
+```
+
+The same HTTP rules apply as when [running from source](#installation): it serves
+`http://127.0.0.1:8001/mcp` by default and needs `MCP_AUTH_TOKEN` on any
+non-loopback host.
+
+#### Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| `spawn uvx ENOENT` / server fails to start | The client can't find `uvx` on its PATH. Run `where uvx` (Windows) or `which uvx` (macOS/Linux) and put that full path in `"command"`. |
+| Server starts but a source's tools fail | That source's variables are missing or wrong in `env`. The error message names the missing setting. |
+| `server_busy` or "rate limit exceeded" errors | The load limits were hit. Wait a few seconds, or raise `DB_MAX_CONCURRENT_QUERIES` / `RATE_LIMIT_RPS` in `env`. |
+| Need the server logs | Logs go to stderr, which the client captures. In Claude Desktop, look in the `logs` folder next to `claude_desktop_config.json` (`mcp-server-investigation.log`). |
+
+**For developers:** to run your local checkout through `uvx`, use
+`uvx --no-cache --from <path-to-repo> opsinsight-mcp`. Without `--no-cache`, uvx
+can reuse an earlier build of the folder and miss your latest edits. For
+day-to-day development, use `uv run` from the repo instead
+([Installation](#installation)).
 
 ### Prerequisites (running from source)
 

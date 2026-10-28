@@ -185,3 +185,9 @@ LIMIT injection/clamping) in
 physical connection in `integrations/database/engine.py` (`SET default_transaction_read_only
 = on`, statement timeout, idle-in-transaction timeout) — the DB role itself is meant to be the
 last line of defense, not the application layer alone.
+
+**Load limits**:
+- **Rate limit:** `core/rate_limit.py` builds a global FastMCP `RateLimitingMiddleware` (`RATE_LIMIT_RPS`/`RATE_LIMIT_BURST`). It is added in `server.run()`, after `AuditMiddleware`, so rejected requests are still audited.
+- **Concurrency slots:** in `DatabaseService`, every DB method runs inside `self._query_slot()`, a semaphore of `DB_MAX_CONCURRENT_QUERIES` that fails with `server_busy` after `DB_QUEUE_TIMEOUT_S`. New DB methods must use it too.
+- **Response budget:** row-returning methods pass rows through `_cap_rows` (cell truncation plus `fit_rows_to_budget` against `DB_MAX_RESPONSE_BYTES`) and report `meta.truncated`. Redact before capping, so a truncated cell can't hide part of a secret from the redaction regexes.
+- **Search fan-out:** `introspect`'s search fan-outs use `_gather_bounded` (`SEARCH_FANOUT_CONCURRENCY`) rather than an unbounded `asyncio.gather`.

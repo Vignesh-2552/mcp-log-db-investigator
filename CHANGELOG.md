@@ -32,6 +32,16 @@ See `docs/security-audit.md` for the full audit (2026-10-28).
 - Length caps on SQL (50k chars), NRQL (20k) and Logs Insights (10k) queries.
 - The Docker image runs as an unprivileged user (uid 10001).
 - `DB_URL` is a secret setting (kept out of reprs and validation errors).
+- Load limits:
+  - Request rate limit on every MCP request (`RATE_LIMIT_RPS`, default 5/s, burst 20;
+    `0` disables it). Over-limit requests get a JSON-RPC "rate limit exceeded" error.
+  - DB tool responses are capped at `DB_MAX_RESPONSE_BYTES` (default 1 MB). Extra rows are
+    dropped and the response is flagged with `meta.truncated` / `meta.truncation_note`.
+  - At most `DB_MAX_CONCURRENT_QUERIES` (default 4) DB tool calls run at once; others fail
+    with `server_busy` after `DB_QUEUE_TIMEOUT_S`.
+  - `db_search_by_identifier` / `db_resolve_store` probe at most 3 tables at a time instead
+    of all 25 in parallel, so one call can't take the whole connection pool.
+  - `db_sample_rows` now truncates oversized cells like `db_run_query` does.
 - Lockfile: authlib 1.9.1, pyjwt 2.15.1, urllib3 2.8.0, dnspython 2.9.0,
   opentelemetry-api 1.45.1 (transitive; fixes the advisories pip-audit reported).
 
