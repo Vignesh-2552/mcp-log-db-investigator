@@ -167,6 +167,12 @@ There is **no application-level table allowlist**. Any table the dedicated read-
 | `nr_describe_log_fields` | `event_type: str = "Log"`, `hours: int = 1` | `keyset()` fields + likely trace/correlation-id attributes | Grounding tool; guessing NR attribute names is the #1 cause of empty results |
 | `nr_run_nrql_query` | `query: str`, `limit: int = 100` | rows, executed query, NerdGraph metadata | **Validated** — see §6.3. `LIMIT` injected/clamped; `SINCE`/`UNTIL` window capped. |
 
+### 4.3a Cross-Source Tools
+
+| Tool | Arguments | Returns | Notes |
+|---|---|---|---|
+| `trace_request` | `value`, `start?`, `end?`, `sources?`, `cw_log_groups?`, `cw_field?`, `nr_event_type?`, `nr_field?`, `db_id_type?`, `limit: int = 200` | one merged timeline (oldest first, each event tagged `source`/`origin`/`in_window`), `undated` DB rows, per-source status + executed query | `TraceService` composes the three source services and runs them in parallel (`asyncio.gather`, CloudWatch in a thread), each under `TRACE_SOURCE_TIMEOUT_S`. Every query still goes through its source's guardrail/redaction. A failed/timed-out source is reported in `data.sources`; the call only fails when every searched source failed. One CloudWatch Insights query covers all log groups. DB rows are **not** window-filtered (`in_window` flags them). Capped at `TRACE_MAX_EVENTS` / `TRACE_MAX_RESPONSE_BYTES`, earliest first. |
+
 ### 4.4 Resources
 
 Read-only context the client can pull without a tool call:
@@ -185,10 +191,9 @@ These appeared in the 0.1 draft and are **not** in the codebase. Do not assume t
 | Item | Original intent | Current substitute |
 |---|---|---|
 | `investigation_start` | Ticket id + description + time window → structured investigation plan | The client model plans from the conversation + cookbook |
-| `trace_request` | Fan out a `request_id` / `correlation_id` across CloudWatch **and** the DB, return a merged timeline | `cw_get_trace_events` (CloudWatch only) + `db_search_by_identifier` / `nr_run_nrql_query`; the client merges |
 | MCP prompts `investigate_incident` / `trace_user_journey` / `slow_endpoint_rca` | Reusable workflows exposed to the client | None |
 
-Cross-source correlation (DB + CloudWatch + New Relic) is entirely manual: the client model fans out to each source's tools and merges results itself, with no server-side guidance beyond the query cookbook.
+Cross-source correlation for a single identifier is handled by `trace_request` (§4.3a). Anything broader (e.g. correlating error spikes with metrics) is still done by the client model across the per-source tools.
 
 ## 5. Investigation Flow (Sequence)
 
@@ -247,7 +252,7 @@ This is the section that must not be compromised — the server has production d
 - Resource-scoped to `CLOUDWATCH_ALLOWED_LOG_GROUP` (comma-separated). Region always comes from `CLOUDWATCH_REGION` — there is no `AWS_REGION` fallback. Auth is `CLOUDWATCH_ACCESS_KEY_ID`/`CLOUDWATCH_SECRET_ACCESS_KEY`, else `AWS_PROFILE`, else boto3's default credential chain.
 - **Cost ceiling.** Logs Insights bills per GB scanned. Enforce: max time window (`CW_MAX_WINDOW_HOURS`, default 7 days; default window `CW_DEFAULT_WINDOW_HOURS` = 24 h), mandatory `limit` on `StartQuery`, abort + report if `bytesScanned` exceeds `CW_MAX_BYTES_SCANNED`. Bytes scanned is always returned in `meta`. On ceiling exceeded, the service also suggests a narrower window from the observed scan rate.
 - **Polling.** `poll_query_with_backoff` up to `CW_POLL_MAX_WAIT_S` (default 60 s). If still running, return `query_id` so the caller can continue rather than failing hard.
-- **`cw_get_trace_events` injection surface.** Logs Insights has no parameterized-query API. `field` must match a field-name regex; `value` has `\`/`"` escaped and embedded newlines rejected.
+- **`cw_get_trace_events` / `trace_request` injection surface.** Logs Insights has no parameterized-query API. `field` must match a field-name regex; `value` has `\`/`"` escaped and embedded newlines rejected.
 
 ### 6.3 New Relic
 
@@ -259,6 +264,8 @@ NRQL has no AST parser comparable to sqlglot, so the guardrail is regex-based (`
 - Reject write-ish keywords (`DELETE`, `INSERT`, `UPDATE`, `CREATE`, `DROP`, `ALTER`, `GRANT`, `TRUNCATE`).
 - Inject/clamp `LIMIT` to `NR_MAX_ROWS` (default 500); `LIMIT MAX` is clamped too.
 - Cap the `SINCE`/`UNTIL` span at `NR_MAX_WINDOW_HOURS` (default 7 days) and inject `SINCE NR_DEFAULT_WINDOW_HOURS hours ago` (default 24) when there is no `SINCE`. Supported operands: `<n> <unit> ago`, `now`/`today`/`yesterday`, epoch seconds/millis, quoted ISO dates; anything else is rejected (`unsupported_time_range`).
+
+`trace_request` builds its NRQL from validated parts: `event_type` must be a bare identifier, the attribute name must match `[A-Za-z_][A-Za-z0-9_.]*` (emitted backtick-quoted), and the value is placed in a single-quoted literal with `\`/`'` escaped and newlines rejected. The built query then goes through the same validation/window/LIMIT path as `nr_run_nrql_query`.
 
 This is a first line of defence, not as rigorous as the SQL guardrail. It is good enough because the NerdGraph `nrql` field itself only accepts queries, not mutations (alert creation etc. go through other GraphQL operations). Credentials: `NEW_RELIC_API_KEY` (user key, `NRAK-...`) + `NEW_RELIC_ACCOUNT_ID`; region `us` or `eu` selects the GraphQL endpoint.
 
@@ -415,7 +422,8 @@ Weekly review of tool usage and guardrail rejections to improve the cookbook rem
 | **3** | Convenience tools `cw_get_trace_events`, `db_resolve_store`, catalog-driven `db_search_by_identifier` | **Done** (CloudWatch-only trace; not the original cross-source `trace_request`) |
 | **4** | Streamable HTTP transport | **Done** (no OAuth/bearer; bind is open HTTP) |
 | **4b** | stdio transport, PyPI package `opsinsight-mcp` (uvx), GHCR image, tag-triggered publishing | **Done** (0.1.0) |
-| **5** | Composite `investigation_start` / `trace_request`, MCP prompts, shared-deployment auth, dashboards | **Not started** |
+| **5a** | Cross-source `trace_request` (CloudWatch + New Relic + DB merged timeline) | **Done** |
+| **5** | `investigation_start`, MCP prompts, shared-deployment auth, dashboards | **Not started** |
 
 ## 11. Risks
 

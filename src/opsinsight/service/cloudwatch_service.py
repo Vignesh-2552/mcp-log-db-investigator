@@ -353,7 +353,7 @@ class CloudWatchService(BaseService):
 
     def get_trace_events(
         self,
-        log_group: str,
+        log_group: str | list[str],
         field: str,
         value: str,
         start: str,
@@ -361,13 +361,15 @@ class CloudWatchService(BaseService):
         limit: int = 200,
         include_ptr: bool = False,
     ) -> dict:
+        # A list searches several groups in one Insights query (one scan, one bill).
+        log_groups = [log_group] if isinstance(log_group, str) else list(log_group)
         try:
             validate_trace_field(field)
             escaped_value = build_trace_filter_value(value)
         except ToolError as e:
             return e.to_response()
         query = build_trace_query(field, escaped_value)
-        response = self.run_insights_query([log_group], query, start, end, limit, include_ptr)
+        response = self.run_insights_query(log_groups, query, start, end, limit, include_ptr)
         if response.get("ok"):
             response["data"].update(
                 {"log_group": log_group, "field": field, "value": value, "executed_query": query}

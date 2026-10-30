@@ -24,3 +24,8 @@ audit.jsonl
 .ruff_cache/
 .uv-cache/
 dist_review/
+
+# coverage
+.coverage
+.coverage.*
+htmlcov/
