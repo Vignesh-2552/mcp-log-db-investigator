@@ -3,9 +3,11 @@ from datetime import UTC, datetime, timedelta
 
 from opsinsight.core.errors import NewRelicGuardrailError
 from opsinsight.integrations.newrelic.constants import (
+    ATTRIBUTE_NAME_RE,
     BLOCKED_KEYWORDS,
     EPOCH_MS_RE,
     EPOCH_S_RE,
+    EVENT_TYPE_RE,
     LIMIT_RE,
     LITERAL_OR_COMMENT_RE,
     MAX_NRQL_CHARS,
@@ -36,6 +38,39 @@ def _append_clause(query: str, clause: str, has_line_comment: bool) -> str:
     # A trailing `--`/`//` comment would swallow a clause appended on the same line.
     separator = "\n" if has_line_comment else " "
     return f"{query}{separator}{clause}"
+
+
+def validate_event_type(event_type: str) -> str:
+    if not EVENT_TYPE_RE.match(event_type):
+        raise NewRelicGuardrailError(
+            rule="invalid_event_type",
+            message="event_type must be a bare identifier (letters, digits, underscore).",
+            detail=f"Got: {event_type!r}",
+        )
+    return event_type
+
+
+def validate_attribute_name(attribute: str) -> str:
+    if not ATTRIBUTE_NAME_RE.match(attribute):
+        raise NewRelicGuardrailError(
+            rule="invalid_field_name",
+            message="field must be an attribute name (letters, digits, underscore, dot).",
+            detail=f"Got: {attribute!r}",
+        )
+    return attribute
+
+
+def build_nrql_string_literal(value: str) -> str:
+    """Escapes `value` for embedding inside a single-quoted NRQL literal.
+    Backslash-escapes backslashes and single quotes, and rejects newlines
+    outright so a value can't break out of the literal and append clauses."""
+    if "\n" in value or "\r" in value:
+        raise NewRelicGuardrailError(
+            rule="invalid_trace_value",
+            message="value must not contain newlines.",
+            detail=f"Got: {value!r}",
+        )
+    return value.replace("\\", "\\\\").replace("'", "\\'")
 
 
 def validate_nrql(query: str, max_rows: int, requested_limit: int | None = None) -> str:

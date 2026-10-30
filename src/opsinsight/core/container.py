@@ -2,6 +2,7 @@ from opsinsight.core.config import Settings, get_settings
 from opsinsight.service.cloudwatch_service import CloudWatchService
 from opsinsight.service.database_service import DatabaseService
 from opsinsight.service.newrelic_service import NewRelicService
+from opsinsight.service.trace_service import TraceService
 
 
 class Container:
@@ -35,11 +36,13 @@ class Container:
         database_service: DatabaseService | None = None,
         cloudwatch_service: CloudWatchService | None = None,
         newrelic_service: NewRelicService | None = None,
+        trace_service: TraceService | None = None,
     ) -> None:
         self._settings_override = settings
         self._database_service = database_service
         self._cloudwatch_service = cloudwatch_service
         self._newrelic_service = newrelic_service
+        self._trace_service = trace_service
 
     @property
     def settings(self) -> Settings:
@@ -62,6 +65,18 @@ class Container:
         if self._newrelic_service is None:
             self._newrelic_service = NewRelicService(self.settings)
         return self._newrelic_service
+
+    @property
+    def trace_service(self) -> TraceService:
+        # Built from the other three, so injected fakes flow through to it.
+        if self._trace_service is None:
+            self._trace_service = TraceService(
+                self.settings,
+                database_service=self.database_service,
+                cloudwatch_service=self.cloudwatch_service,
+                newrelic_service=self.newrelic_service,
+            )
+        return self._trace_service
 
 
 _container: Container | None = None

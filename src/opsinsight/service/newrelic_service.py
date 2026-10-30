@@ -1,4 +1,5 @@
 from collections.abc import Awaitable, Callable
+from datetime import datetime
 
 import httpx
 
@@ -9,7 +10,10 @@ from opsinsight.core.redaction import redact_rows
 from opsinsight.integrations.newrelic.client import run_nrql
 from opsinsight.integrations.newrelic.constants import EVENT_TYPE_RE
 from opsinsight.integrations.newrelic.guardrail import (
+    build_nrql_string_literal,
     enforce_nrql_window,
+    validate_attribute_name,
+    validate_event_type,
     validate_nrql,
 )
 from opsinsight.integrations.newrelic.models import (
@@ -20,6 +24,7 @@ from opsinsight.integrations.newrelic.models import (
 from opsinsight.integrations.newrelic.queries import (
     build_keyset_query,
     build_show_event_types_query,
+    build_trace_query,
 )
 from opsinsight.service.base import BaseService
 
@@ -135,3 +140,29 @@ class NewRelicService(BaseService):
             metadata=result["metadata"],
         )
         return self.ok(result_model.to_dict(), {"row_count": len(rows)})
+
+    async def get_trace_events(
+        self,
+        event_type: str,
+        field: str,
+        value: str,
+        since: datetime,
+        until: datetime,
+        limit: int = 200,
+    ) -> dict:
+        """Every `event_type` event whose `field` equals `value` in [since, until].
+        Builds the NRQL from validated parts, then runs it through the same
+        guardrail/window/redaction path as `run_nrql_query`."""
+        try:
+            validate_event_type(event_type)
+            validate_attribute_name(field)
+            literal = build_nrql_string_literal(value)
+        except ToolError as e:
+            return e.to_response()
+        query = build_trace_query(
+            event_type, field, literal, int(since.timestamp() * 1000), int(until.timestamp() * 1000)
+        )
+        response = await self.run_nrql_query(query, limit)
+        if response.get("ok"):
+            response["data"].update({"event_type": event_type, "field": field, "value": value})
+        return response

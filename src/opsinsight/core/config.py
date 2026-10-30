@@ -59,6 +59,21 @@ class Settings(BaseSettings):
     nr_default_window_hours: int = 24
     nr_max_rows: int = 500
 
+    # trace_request (cross-source timeline). Every field can also be passed per
+    # call; these are the defaults. A source with nothing configured is skipped.
+    # Log groups to search; empty -> every group in CLOUDWATCH_ALLOWED_LOG_GROUP.
+    trace_cw_log_groups: str = ""
+    trace_cw_field: str = "requestId"
+    trace_nr_event_type: str = "Log"
+    trace_nr_field: str = "requestId"
+    # DB column / id type to search (e.g. "order_id"); empty -> DB is skipped
+    # unless the call passes db_id_type.
+    trace_db_id_type: str = ""
+    # Per-source limit on how long trace_request waits before reporting a timeout.
+    trace_source_timeout_s: float = 60.0
+    trace_max_events: int = 500
+    trace_max_response_bytes: int = 1_000_000
+
     # Server
     # Loopback by default. Binding anywhere else requires MCP_AUTH_TOKEN (or an
     # explicit ALLOW_UNAUTHENTICATED_HTTP=true for deployments behind an
@@ -142,6 +157,11 @@ class Settings(BaseSettings):
         return frozenset(
             item.strip() for item in self.cloudwatch_allowed_log_group.split(",") if item.strip()
         )
+
+    @property
+    def trace_cw_log_groups_list(self) -> list[str]:
+        configured = [g.strip() for g in self.trace_cw_log_groups.split(",") if g.strip()]
+        return configured or sorted(self.cw_log_group_allowlist_set)
 
     @property
     def db_dsn(self) -> str:

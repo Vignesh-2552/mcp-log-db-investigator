@@ -113,6 +113,19 @@
     | limit 200
   notes: Prefer calling `cw_get_trace_events(log_group=..., field="order_id", value="88213", start=..., end=...)` instead of hand-writing this — it builds and escapes the same query and applies the standard row-shape (redaction, @ptr stripping). Keep this raw form only for multi-field filters the tool doesn't cover.
 
+- id: trace-request-across-sources
+  title: "One identifier across CloudWatch, New Relic and the DB in one call"
+  kind: workflow
+  query: |
+    -- 1. Ground the field names first if unsure:
+    --    cw_describe_log_fields / nr_describe_log_fields -> correlation_id_candidates
+    -- 2. trace_request(value="<id>", start=..., end=...,
+    --                  cw_field="<cw candidate>", nr_field="<nr candidate>",
+    --                  db_id_type="order_id")
+    -- 3. Read data.sources: a source with 0 rows and status "ok" usually means the
+    --    field name is wrong for that source, not that the request never reached it.
+  notes: Start here when a ticket gives a request/order id. DB rows are not window-filtered; check each event's in_window. Use the per-source tools to dig deeper once the timeline shows where it broke.
+
 - id: cw-describe-then-trace
   title: "CloudWatch: discover the correlation field, then pull its trace"
   kind: logs_insights
