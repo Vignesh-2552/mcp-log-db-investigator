@@ -6,6 +6,15 @@ to PyPI only once, so every release gets a new number.
 
 ## [Unreleased]
 
+### Added
+- `opsinsight-mcp doctor` / `investigation-server doctor` command for pre-flight
+  diagnostics without booting the server. Validates PostgreSQL connectivity &
+  read-only status, AWS CloudWatch credentials & allowlisted log groups, New
+  Relic NerdGraph authentication, and server transport/security configurations,
+  with strict secret masking and deterministic exit codes (`0` on healthy/skipped,
+  `1` on failure).
+- CLI `--help` (`-h`) and `--version` (`-v`) options for the server entry points.
+
 ### Changed
 Internal refactor; no tool names, parameters or response shapes changed.
 - `trace_request` now runs pluggable `TraceSource` adapters (`service/trace_sources.py`)
