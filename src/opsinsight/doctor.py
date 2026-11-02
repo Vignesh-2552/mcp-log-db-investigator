@@ -16,21 +16,19 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
+from sqlalchemy.engine import make_url
+from sqlalchemy.ext.asyncio import AsyncEngine
+
 import opsinsight
 from opsinsight.core.config import Settings, get_settings
+from opsinsight.core.redaction import redact_text
 
 # ---------------------------------------------------------------------------
 # Types for dependency injection (doctor never imports real clients directly)
 # ---------------------------------------------------------------------------
 
-# check_postgres: async callable that receives (dsn, timeout) → dict with
-# keys "server_version", "transaction_read_only"
-AsyncPgProbe = Callable[[str, int], Awaitable[dict[str, Any]]]
-
-# check_cloudwatch: sync callable that receives Settings → logs-client
+EngineFactory = Callable[[Settings], AsyncEngine]
 LogsClientFactory = Callable[[Settings], Any]
-
-# check_newrelic: async callable that receives (url, api_key, timeout) → dict
 AsyncHttpGet = Callable[[str, str, float], Awaitable[dict[str, Any]]]
 
 _DEFAULT_DB_DSN = "postgresql+asyncpg://localhost:5432/appdb"
@@ -57,19 +55,34 @@ class CheckResult:
 
 
 # ---------------------------------------------------------------------------
-# Secret-masking utilities
+# Secret-masking & Error Sanitization utilities
 # ---------------------------------------------------------------------------
-
-_DSN_PASSWORD_RE = re.compile(r"://([^:]+):([^@]+)@")
-
 
 def mask_dsn(url: str) -> str:
     """Mask the password in a database DSN.
 
-    ``postgresql+asyncpg://user:secret@host/db``
-    → ``postgresql+asyncpg://user:****@host/db``
+    Uses SQLAlchemy's make_url(url).render_as_string(hide_password=True).
+    If the authority portion contains unescaped '@' characters in the password,
+    or if parsing fails, replaces the userinfo portion before the last '@'
+    with '****' without leaking any password fragments.
     """
-    return _DSN_PASSWORD_RE.sub(r"://\1:****@", url)
+    if "://" in url:
+        authority = url.split("://", 1)[-1].split("/", 1)[0].split("?", 1)[0]
+        if authority.count("@") > 1:
+            scheme = url.split("://", 1)[0]
+            remainder = url[len(scheme) + 3 :]
+            _, host_part = remainder.rsplit("@", 1)
+            return f"{scheme}://****@{host_part}"
+
+    try:
+        return make_url(url).render_as_string(hide_password=True)
+    except Exception:  # noqa: BLE001
+        # Fallback when URL has unescaped characters like '@' in password:
+        # Match scheme:// followed by userinfo up to the LAST @ before host/path
+        match = re.match(r"^([a-zA-Z0-9+._-]+://).*@([^/@?]+.*)$", url)
+        if match:
+            return f"{match.group(1)}****@{match.group(2)}"
+        return "[INVALID_DSN]"
 
 
 def mask_key(key: str | None, *, prefix_len: int = 4, suffix_len: int = 3) -> str:
@@ -87,38 +100,73 @@ def mask_key(key: str | None, *, prefix_len: int = 4, suffix_len: int = 3) -> st
     return key[:prefix_len] + "..." + key[-suffix_len:]
 
 
+def sanitize_error(message: str, settings: Settings | None = None) -> str:
+    """Sanitize error messages to ensure no credentials or secrets appear in reports."""
+    cleaned = redact_text(message)
+
+    if settings is not None:
+        dsn = settings.db_dsn
+        cleaned = cleaned.replace(dsn, mask_dsn(dsn))
+        plain_dsn = dsn.replace("postgresql+asyncpg://", "postgresql://")
+        cleaned = cleaned.replace(plain_dsn, mask_dsn(plain_dsn))
+
+        if settings.db_url:
+            secret_val = settings.db_url.get_secret_value()
+            if secret_val:
+                cleaned = cleaned.replace(secret_val, mask_dsn(secret_val))
+
+        if settings.cloudwatch_secret_access_key:
+            sec = settings.cloudwatch_secret_access_key.get_secret_value()
+            if sec and sec in cleaned:
+                cleaned = cleaned.replace(sec, "[REDACTED_SECRET]")
+
+        if settings.new_relic_api_key:
+            key = settings.new_relic_api_key.get_secret_value()
+            if key and key in cleaned:
+                cleaned = cleaned.replace(key, mask_key(key))
+
+        if settings.mcp_auth_token:
+            token = settings.mcp_auth_token.get_secret_value()
+            if token and token in cleaned:
+                cleaned = cleaned.replace(token, "[REDACTED_SECRET]")
+
+    return cleaned
+
+
 # ---------------------------------------------------------------------------
 # Individual check implementations
 # ---------------------------------------------------------------------------
 
-async def _default_pg_probe(dsn: str, timeout: int) -> dict[str, Any]:
-    """Connect to Postgres via asyncpg, run ``SELECT 1``, check read-only,
-    and return version + read-only status."""
-    import asyncpg  # imported lazily — tests inject a fake instead
+# ---- PostgreSQL -----------------------------------------------------------
 
-    # asyncpg wants a plain ``postgresql://`` scheme, not the SQLAlchemy
-    # dialect prefix ``postgresql+asyncpg://``.
-    connect_dsn = dsn.replace("postgresql+asyncpg://", "postgresql://")
-    conn: asyncpg.Connection = await asyncio.wait_for(
-        asyncpg.connect(connect_dsn, timeout=timeout),
-        timeout=timeout,
-    )
-    try:
-        await conn.fetchval("SELECT 1")
-        read_only = await conn.fetchval("SHOW transaction_read_only")
-        version = await conn.fetchval("SHOW server_version")
-        return {"server_version": version, "transaction_read_only": read_only}
-    finally:
-        await conn.close()
+def _default_engine_factory(settings: Settings) -> AsyncEngine:
+    from opsinsight.integrations.database.engine import get_engine
+
+    return get_engine(settings)
+
+
+async def _probe_engine(engine: AsyncEngine) -> dict[str, Any]:
+    from sqlalchemy import text
+
+    async with engine.connect() as conn:
+        await conn.execute(text("SELECT 1"))
+        version = await conn.scalar(text("SHOW server_version"))
+        default_ro = await conn.scalar(text("SHOW default_transaction_read_only"))
+        txn_ro = await conn.scalar(text("SHOW transaction_read_only"))
+        return {
+            "server_version": str(version) if version is not None else "unknown",
+            "default_transaction_read_only": str(default_ro) if default_ro is not None else "off",
+            "transaction_read_only": str(txn_ro) if txn_ro is not None else "off",
+        }
 
 
 async def check_postgres(
     settings: Settings,
     *,
-    pg_probe: AsyncPgProbe | None = None,
-    timeout: int = 3,
+    engine_factory: EngineFactory | None = None,
+    timeout: float = 3.0,
 ) -> CheckResult:
-    """Validate PostgreSQL connectivity, read-only status, and latency."""
+    """Validate PostgreSQL connectivity, read-only session status, and latency."""
     dsn = settings.db_dsn
     if dsn == _DEFAULT_DB_DSN and "db_url" not in settings.model_fields_set:
         return CheckResult(
@@ -127,24 +175,30 @@ async def check_postgres(
             message="Not configured (DB_URL not set)",
         )
 
-    probe = pg_probe or _default_pg_probe
+    factory = engine_factory or _default_engine_factory
     t0 = time.perf_counter()
     try:
-        info = await asyncio.wait_for(probe(dsn, timeout), timeout=timeout + 1)
+        engine = factory(settings)
+        info = await asyncio.wait_for(_probe_engine(engine), timeout=timeout)
     except Exception as exc:  # noqa: BLE001 — diagnostic: catch-all is intentional
         return CheckResult(
             name="PostgreSQL",
             status=CheckStatus.FAIL,
-            message=f"{type(exc).__name__}: {_sanitize_pg_error(str(exc), dsn)}",
+            message=f"{type(exc).__name__}: {sanitize_error(str(exc), settings)}",
             error=type(exc).__name__,
         )
     latency = (time.perf_counter() - t0) * 1000.0
 
     version = info.get("server_version", "unknown")
-    read_only = info.get("transaction_read_only", "off")
-    ro_label = "read-only verified" if read_only == "on" else "read-only NOT enforced"
+    default_ro = info.get("default_transaction_read_only", "off")
+    txn_ro = info.get("transaction_read_only", "off")
 
-    status = CheckStatus.PASS if read_only == "on" else CheckStatus.WARN
+    # Read-only is verified if the session hardening hook set default_transaction_read_only = on,
+    # or if the current transaction is read-only
+    is_read_only = (default_ro == "on" or txn_ro == "on")
+    ro_label = "read-only verified" if is_read_only else "read-only NOT enforced"
+
+    status = CheckStatus.PASS if is_read_only else CheckStatus.WARN
     return CheckResult(
         name="PostgreSQL",
         status=status,
@@ -153,23 +207,17 @@ async def check_postgres(
     )
 
 
-def _sanitize_pg_error(message: str, dsn: str) -> str:
-    """Strip credentials from the raw error message."""
-    # Replace the full DSN (with password) if it appears in the message
-    masked = mask_dsn(dsn)
-    message = message.replace(dsn, masked)
-    # Also strip asyncpg-style DSN variants
-    plain_dsn = dsn.replace("postgresql+asyncpg://", "postgresql://")
-    message = message.replace(plain_dsn, mask_dsn(plain_dsn))
-    return message
-
-
 # ---- AWS CloudWatch -------------------------------------------------------
 
 def _default_logs_client_factory(settings: Settings) -> Any:
-    from opsinsight.integrations.cloudwatch.client import get_logs_client
+    from botocore.config import Config
 
-    return get_logs_client(settings)
+    from opsinsight.integrations.cloudwatch.client import _session
+
+    # Bounded timeouts so an unreachable AWS endpoint cannot block the worker thread
+    cw_config = Config(connect_timeout=3, read_timeout=5, retries={"max_attempts": 1})
+    session = _session(settings)
+    return session.client("logs", config=cw_config)
 
 
 def _probe_cw_sync(client: Any, allowlist: frozenset[str]) -> str:
@@ -184,6 +232,9 @@ def _probe_cw_sync(client: Any, allowlist: frozenset[str]) -> str:
         n = len(found_groups)
         groups_label = ", ".join(sorted(found_groups)) if found_groups else "none matched"
         return f"{n} log group{'s' if n != 1 else ''} accessible ({groups_label})"
+
+    # Allowlist is empty: make a bounded API call to verify credentials against AWS
+    client.describe_log_groups(limit=1)
     return "Credentials valid (no log group allowlist configured)"
 
 
@@ -228,7 +279,7 @@ async def check_cloudwatch(
             name="AWS CloudWatch",
             status=CheckStatus.FAIL,
             latency_ms=round(latency, 1),
-            message=f"{type(exc).__name__}: {exc}",
+            message=f"{type(exc).__name__}: {sanitize_error(str(exc), settings)}",
             error=type(exc).__name__,
         )
     latency = (time.perf_counter() - t0) * 1000.0
@@ -294,18 +345,19 @@ async def check_newrelic(
             name="New Relic",
             status=CheckStatus.FAIL,
             latency_ms=round(latency, 1),
-            message=f"{type(exc).__name__}: {exc}",
+            message=f"{type(exc).__name__}: {sanitize_error(str(exc), settings)}",
             error=type(exc).__name__,
         )
     latency = (time.perf_counter() - t0) * 1000.0
 
     errors = payload.get("errors")
     if errors:
+        raw_err = errors[0].get("message", str(errors[0]))
         return CheckResult(
             name="New Relic",
             status=CheckStatus.FAIL,
             latency_ms=round(latency, 1),
-            message=f"NerdGraph error: {errors[0].get('message', str(errors[0]))}",
+            message=f"NerdGraph error: {sanitize_error(raw_err, settings)}",
             error="NerdGraphError",
         )
 
@@ -439,6 +491,14 @@ async def run_doctor(settings: Settings | None = None) -> int:
 
     report = format_report(results, opsinsight.__version__)
     print(report, file=sys.stderr)
+
+    # Clean up engine if opened
+    try:
+        from opsinsight.integrations.database.engine import reset_engine
+
+        await reset_engine()
+    except Exception:  # noqa: S110, BLE001
+        pass
 
     has_failure = any(r.status == CheckStatus.FAIL for r in results)
     return 1 if has_failure else 0

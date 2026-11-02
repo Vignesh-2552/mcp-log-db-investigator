@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Self
 from unittest.mock import MagicMock
 
 from pydantic import SecretStr
@@ -11,6 +11,7 @@ from opsinsight.core.config import Settings
 from opsinsight.doctor import (
     CheckResult,
     CheckStatus,
+    _default_logs_client_factory,
     check_cloudwatch,
     check_newrelic,
     check_postgres,
@@ -19,6 +20,7 @@ from opsinsight.doctor import (
     mask_dsn,
     mask_key,
     run_doctor,
+    sanitize_error,
 )
 
 # ---------------------------------------------------------------------------
@@ -36,25 +38,94 @@ def _settings(**overrides: Any) -> Settings:
     return Settings(_env_file=None, **defaults)
 
 
+class FakeConn:
+    def __init__(self, version: str = "15.3", default_ro: str = "on", txn_ro: str = "on") -> None:
+        self.version = version
+        self.default_ro = default_ro
+        self.txn_ro = txn_ro
+
+    async def execute(self, statement: Any) -> None:
+        pass
+
+    async def scalar(self, statement: Any) -> Any:
+        text_sql = str(statement).upper()
+        if "SERVER_VERSION" in text_sql:
+            return self.version
+        if "DEFAULT_TRANSACTION_READ_ONLY" in text_sql:
+            return self.default_ro
+        if "TRANSACTION_READ_ONLY" in text_sql:
+            return self.txn_ro
+        return None
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *args: object) -> None:
+        pass
+
+
+class FakeEngine:
+    def __init__(self, conn: FakeConn | None = None) -> None:
+        self.conn = conn or FakeConn()
+
+    def connect(self) -> FakeConn:
+        return self.conn
+
+
 # ---------------------------------------------------------------------------
-# mask_dsn
+# mask_dsn & sanitize_error
 # ---------------------------------------------------------------------------
 
 
 class TestMaskDsn:
     def test_masks_password(self):
         dsn = "postgresql+asyncpg://user:s3cr3t@host:5432/db"
-        assert mask_dsn(dsn) == "postgresql+asyncpg://user:****@host:5432/db"
+        assert mask_dsn(dsn) == "postgresql+asyncpg://user:***@host:5432/db"
 
     def test_no_password(self):
         dsn = "postgresql+asyncpg://host:5432/db"
         assert mask_dsn(dsn) == dsn
 
     def test_special_characters_in_password(self):
+        # Password contains '@' unencoded — must not leave leftover fragments like 'ss:w0rd!'
         dsn = "postgresql+asyncpg://admin:p@ss:w0rd!@myhost:5432/mydb"
         result = mask_dsn(dsn)
         assert "p@ss:w0rd!" not in result
+        assert "ss:w0rd!" not in result
+        assert "w0rd!" not in result
         assert "****@" in result
+
+    def test_multiple_at_symbols_in_password(self):
+        dsn = "postgresql+asyncpg://admin:pass@@word@host:5432/db"
+        result = mask_dsn(dsn)
+        assert "pass@@word" not in result
+        assert "****@" in result
+
+    def test_invalid_dsn_fallback(self):
+        assert mask_dsn("not-a-valid-url") == "[INVALID_DSN]"
+
+
+class TestSanitizeError:
+    def test_sanitizes_embedded_dsn_and_secrets(self):
+        secret_dsn = "postgresql+asyncpg://admin:p@ss:w0rd!@myhost:5432/mydb"
+        settings = _settings(
+            db_url=SecretStr(secret_dsn),
+            cloudwatch_secret_access_key=SecretStr("super_aws_secret_key"),
+            new_relic_api_key=SecretStr("nr-test-api-key"),
+            mcp_auth_token=SecretStr("bearer_token_secret"),
+        )
+        raw_error = (
+            f"Failed to connect: {secret_dsn} with key super_aws_secret_key and "
+            f"token bearer_token_secret and nr-test-api-key"
+        )
+        cleaned = sanitize_error(raw_error, settings)
+
+        assert "p@ss:w0rd!" not in cleaned
+        assert "ss:w0rd!" not in cleaned
+        assert "super_aws_secret_key" not in cleaned
+        assert "bearer_token_secret" not in cleaned
+        assert "nr-test-api-key" not in cleaned
+        assert "****@" in cleaned
 
 
 # ---------------------------------------------------------------------------
@@ -86,11 +157,9 @@ class TestMaskKey:
 
 class TestCheckPostgres:
     async def test_pass_with_read_only(self):
-        async def probe(dsn: str, timeout: int) -> dict:
-            return {"server_version": "15.3", "transaction_read_only": "on"}
-
+        engine = FakeEngine(FakeConn(version="15.3", default_ro="on", txn_ro="on"))
         settings = _settings(db_url=SecretStr("postgresql+asyncpg://u:p@host/db"))
-        result = await check_postgres(settings, pg_probe=probe)
+        result = await check_postgres(settings, engine_factory=lambda s: engine)
 
         assert result.status == CheckStatus.PASS
         assert result.latency_ms is not None
@@ -98,28 +167,27 @@ class TestCheckPostgres:
         assert "15.3" in result.message
 
     async def test_warn_when_not_read_only(self):
-        async def probe(dsn: str, timeout: int) -> dict:
-            return {"server_version": "14.0", "transaction_read_only": "off"}
-
+        # When default_transaction_read_only is 'off', session is not hardened
+        engine = FakeEngine(FakeConn(version="14.0", default_ro="off", txn_ro="off"))
         settings = _settings(db_url=SecretStr("postgresql+asyncpg://u:p@host/db"))
-        result = await check_postgres(settings, pg_probe=probe)
+        result = await check_postgres(settings, engine_factory=lambda s: engine)
 
         assert result.status == CheckStatus.WARN
         assert "read-only NOT enforced" in result.message
 
     async def test_fail_on_connection_error(self):
-        async def probe(dsn: str, timeout: int) -> dict:
-            raise ConnectionRefusedError("Host unreachable")
+        class BrokenEngine:
+            def connect(self):
+                raise ConnectionRefusedError("Host unreachable")
 
         settings = _settings(db_url=SecretStr("postgresql+asyncpg://u:p@host/db"))
-        result = await check_postgres(settings, pg_probe=probe)
+        result = await check_postgres(settings, engine_factory=lambda s: BrokenEngine())
 
         assert result.status == CheckStatus.FAIL
         assert "ConnectionRefusedError" in result.message
         assert result.error == "ConnectionRefusedError"
 
     async def test_skip_when_unconfigured(self):
-        # Use the default DSN and don't include db_url in fields_set
         settings = _settings()
         result = await check_postgres(settings)
 
@@ -127,17 +195,19 @@ class TestCheckPostgres:
         assert "Not configured" in result.message
 
     async def test_credentials_sanitized_in_error(self):
-        secret_dsn = "postgresql+asyncpg://admin:SuperSecret123@dbhost:5432/mydb"
+        secret_dsn = "postgresql+asyncpg://admin:p@ss:w0rd!@dbhost:5432/mydb"
 
-        async def probe(dsn: str, timeout: int) -> dict:
-            raise RuntimeError(f"could not connect to {dsn}")
+        class FailingEngine:
+            def connect(self):
+                raise RuntimeError(f"could not connect to {secret_dsn}")
 
         settings = _settings(db_url=SecretStr(secret_dsn))
-        result = await check_postgres(settings, pg_probe=probe)
+        result = await check_postgres(settings, engine_factory=lambda s: FailingEngine())
 
         assert result.status == CheckStatus.FAIL
-        assert "SuperSecret123" not in result.message
-        assert "****" in result.message
+        assert "p@ss:w0rd!" not in result.message
+        assert "ss:w0rd!" not in result.message
+        assert "****@" in result.message
 
 
 # ---------------------------------------------------------------------------
@@ -168,8 +238,10 @@ class TestCheckCloudWatch:
         assert "1 log group accessible" in result.message
         assert "corksy" in result.message
 
-    async def test_pass_without_allowlist(self):
+    async def test_pass_without_allowlist_makes_api_call(self):
+        # Empty allowlist must call describe_log_groups(limit=1) to verify credentials
         mock_client = MagicMock()
+        mock_client.describe_log_groups.return_value = {"logGroups": []}
         settings = _settings(
             cloudwatch_access_key_id="AKIAEXAMPLE",
             cloudwatch_secret_access_key=SecretStr("secret"),
@@ -181,21 +253,52 @@ class TestCheckCloudWatch:
 
         assert result.status == CheckStatus.PASS
         assert "no log group allowlist" in result.message
+        mock_client.describe_log_groups.assert_called_once_with(limit=1)
 
-    async def test_fail_on_api_error(self):
-        def factory(s: Settings) -> None:
-            msg = "InvalidClientTokenId: The security token is not valid"
-            raise RuntimeError(msg)
+    async def test_fail_without_allowlist_when_credentials_invalid(self):
+        # Empty allowlist fails if the credentials call raises an API error
+        mock_client = MagicMock()
+        mock_client.describe_log_groups.side_effect = RuntimeError("InvalidClientTokenId")
 
         settings = _settings(
             cloudwatch_access_key_id="AKIAEXAMPLE",
             cloudwatch_secret_access_key=SecretStr("secret"),
             cloudwatch_region="us-east-1",
         )
-        result = await check_cloudwatch(settings, logs_client_factory=factory)
+        result = await check_cloudwatch(
+            settings, logs_client_factory=lambda s: mock_client
+        )
 
         assert result.status == CheckStatus.FAIL
         assert "InvalidClientTokenId" in result.message
+
+    async def test_default_factory_configures_bounded_timeouts(self):
+        settings = _settings(
+            cloudwatch_access_key_id="AKIAEXAMPLE",
+            cloudwatch_secret_access_key=SecretStr("secret"),
+            cloudwatch_region="us-east-1",
+        )
+        client = _default_logs_client_factory(settings)
+        # Check that botocore client was built with bounded timeout configuration
+        config = client.meta.config
+        assert config.connect_timeout == 3
+        assert config.read_timeout == 5
+
+    async def test_fail_on_api_error_sanitizes_secret(self):
+        secret_val = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+
+        def factory(s: Settings) -> None:
+            raise RuntimeError(f"AWS request failed with secret {secret_val}")
+
+        settings = _settings(
+            cloudwatch_access_key_id="AKIAEXAMPLE",
+            cloudwatch_secret_access_key=SecretStr(secret_val),
+            cloudwatch_region="us-west-1",
+        )
+        result = await check_cloudwatch(settings, logs_client_factory=factory)
+
+        assert result.status == CheckStatus.FAIL
+        assert secret_val not in result.message
 
     async def test_skip_when_unconfigured(self):
         settings = _settings()
@@ -247,18 +350,20 @@ class TestCheckNewRelic:
         assert "Invalid API key" in result.message
         assert result.error == "NerdGraphError"
 
-    async def test_fail_on_network_error(self):
+    async def test_fail_on_network_error_sanitizes_secret(self):
+        api_key_val = "NRAK-SECRETKEY123456789012345"
+
         async def probe(url: str, api_key: str, timeout: float) -> dict:
-            raise ConnectionError("DNS resolution failed")
+            raise ConnectionError(f"DNS resolution failed using key {api_key_val}")
 
         settings = _settings(
-            new_relic_api_key=SecretStr("NRAK-XXXX"),
+            new_relic_api_key=SecretStr(api_key_val),
             new_relic_account_id="12345",
         )
         result = await check_newrelic(settings, http_probe=probe)
 
         assert result.status == CheckStatus.FAIL
-        assert "ConnectionError" in result.message
+        assert api_key_val not in result.message
 
     async def test_skip_when_unconfigured(self):
         settings = _settings()
@@ -416,10 +521,8 @@ class TestFormatReport:
             CheckResult("Server Security", CheckStatus.PASS, None, "OK"),
         ]
         report = format_report(results, "0.2.0")
-        # The latency column for this row should show "-"
         lines = report.split("\n")
         security_line = next(line for line in lines if "Server Security" in line)
-        # Between the status and details columns there should be a dash
         assert "-" in security_line
 
 
@@ -430,13 +533,13 @@ class TestFormatReport:
 
 class TestRunDoctor:
     async def test_returns_0_when_all_pass(self):
-        async def pg_probe(dsn: str, timeout: int) -> dict:
-            return {"server_version": "15.3", "transaction_read_only": "on"}
+        engine = FakeEngine(FakeConn(version="15.3", default_ro="on", txn_ro="on"))
 
         async def nr_probe(url: str, key: str, timeout: float) -> dict:
             return {"data": {"actor": {"user": {"email": "a@b.com"}}}}
 
         mock_cw = MagicMock()
+        mock_cw.describe_log_groups.return_value = {"logGroups": []}
 
         settings = _settings(
             db_url=SecretStr("postgresql+asyncpg://u:p@host/db"),
@@ -448,27 +551,27 @@ class TestRunDoctor:
             server_host="127.0.0.1",
         )
 
-        # Monkey-patch the module-level defaults to inject fakes
         import opsinsight.doctor as doc
 
-        orig_pg = doc._default_pg_probe
+        orig_engine = doc._default_engine_factory
         orig_nr = doc._default_nr_probe
         orig_cw = doc._default_logs_client_factory
-        doc._default_pg_probe = pg_probe
+        doc._default_engine_factory = lambda s: engine
         doc._default_nr_probe = nr_probe
         doc._default_logs_client_factory = lambda s: mock_cw
         try:
             code = await run_doctor(settings)
         finally:
-            doc._default_pg_probe = orig_pg
+            doc._default_engine_factory = orig_engine
             doc._default_nr_probe = orig_nr
             doc._default_logs_client_factory = orig_cw
 
         assert code == 0
 
     async def test_returns_1_when_any_fail(self):
-        async def pg_probe(dsn: str, timeout: int) -> dict:
-            raise ConnectionRefusedError("boom")
+        class BrokenEngine:
+            def connect(self):
+                raise ConnectionRefusedError("boom")
 
         settings = _settings(
             db_url=SecretStr("postgresql+asyncpg://u:p@host/db"),
@@ -476,12 +579,12 @@ class TestRunDoctor:
 
         import opsinsight.doctor as doc
 
-        orig_pg = doc._default_pg_probe
-        doc._default_pg_probe = pg_probe
+        orig_engine = doc._default_engine_factory
+        doc._default_engine_factory = lambda s: BrokenEngine()
         try:
             code = await run_doctor(settings)
         finally:
-            doc._default_pg_probe = orig_pg
+            doc._default_engine_factory = orig_engine
 
         assert code == 1
 
