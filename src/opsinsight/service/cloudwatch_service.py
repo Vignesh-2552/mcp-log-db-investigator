@@ -1,5 +1,7 @@
 import hashlib
 import json
+import threading
+import time
 from collections import defaultdict
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -267,7 +269,13 @@ class CloudWatchService(BaseService):
         end: str,
         limit: int,
         include_ptr: bool,
+        stop_if_running: bool = False,
+        cancel: threading.Event | None = None,
     ) -> dict:
+        """`stop_if_running` stops a query still running when polling gives up,
+        for callers that will never resume its query_id. Setting `cancel`
+        stops polling and the query itself (used when a caller times out,
+        since the thread running this can't be cancelled)."""
         settings = self.settings
         query_id: str | None = None
         bytes_scanned: int | None = None
@@ -290,6 +298,10 @@ class CloudWatchService(BaseService):
             query_id = started["queryId"]
 
             def poll_fn() -> dict:
+                if cancel is not None and cancel.is_set():
+                    return QueryPollResult(
+                        status="Cancelled", results=[], bytes_scanned=0, records_matched=None
+                    ).to_dict()
                 resp = client.get_query_results(queryId=query_id)
                 stats = resp.get("statistics", {})
                 return QueryPollResult(
@@ -299,8 +311,17 @@ class CloudWatchService(BaseService):
                     records_matched=stats.get("recordsMatched"),
                 ).to_dict()
 
-            poll_result = poll_query_with_backoff(poll_fn, settings.cw_poll_max_wait_s)
+            # Waiting on `cancel` instead of sleeping wakes the poll loop as soon as it's set.
+            sleep_fn = cancel.wait if cancel is not None else time.sleep
+            poll_result = poll_query_with_backoff(poll_fn, settings.cw_poll_max_wait_s, sleep_fn=sleep_fn)
             bytes_scanned = poll_result.get("bytes_scanned", 0)
+
+            if poll_result.get("status") == "Cancelled":
+                self._stop_query(client, query_id)
+                raise ToolError(
+                    rule="query_cancelled",
+                    message="The caller stopped waiting, so the Insights query was stopped.",
+                )
 
             if bytes_scanned > settings.cw_max_bytes_scanned:
                 if poll_result.get("status") in RUNNING_STATUSES:
@@ -325,6 +346,19 @@ class CloudWatchService(BaseService):
             return response
         except (BotoCoreError, ClientError) as e:
             return self._aws_error_response(e)
+
+        if poll_result["status"] in RUNNING_STATUSES and stop_if_running:
+            self._stop_query(client, query_id)
+            return self.ok(
+                {
+                    "status": "Stopped",
+                    "query_id": query_id,
+                    "note": f"Query was still running after {settings.cw_poll_max_wait_s}s and was "
+                    "stopped. Narrow the window or the log groups and retry.",
+                    "bytes_scanned": bytes_scanned,
+                },
+                {"bytes_scanned": bytes_scanned},
+            )
 
         if poll_result["status"] in RUNNING_STATUSES:
             return self.ok(
@@ -351,23 +385,43 @@ class CloudWatchService(BaseService):
             {"row_count": len(rows), "bytes_scanned": bytes_scanned},
         )
 
+    @staticmethod
+    def _stop_query(client: Any, query_id: str | None) -> None:
+        """Best effort: the query may already have finished."""
+        if not query_id:
+            return
+        try:
+            client.stop_query(queryId=query_id)
+        except (BotoCoreError, ClientError) as e:
+            logger.info("stop_query(%s) failed: %s", query_id, e)
+
+    @staticmethod
+    def trace_query(field: str, value: str) -> str:
+        """The Insights query `get_trace_events` runs. Raises ToolError on a bad field or value."""
+        validate_trace_field(field)
+        return build_trace_query(field, build_trace_filter_value(value))
+
     def get_trace_events(
         self,
-        log_group: str,
+        log_group: str | list[str],
         field: str,
         value: str,
         start: str,
         end: str,
         limit: int = 200,
         include_ptr: bool = False,
+        stop_if_running: bool = False,
+        cancel: threading.Event | None = None,
     ) -> dict:
+        # A list searches several groups in one Insights query (one scan, one bill).
+        log_groups = [log_group] if isinstance(log_group, str) else list(log_group)
         try:
-            validate_trace_field(field)
-            escaped_value = build_trace_filter_value(value)
+            query = self.trace_query(field, value)
         except ToolError as e:
             return e.to_response()
-        query = build_trace_query(field, escaped_value)
-        response = self.run_insights_query([log_group], query, start, end, limit, include_ptr)
+        response = self.run_insights_query(
+            log_groups, query, start, end, limit, include_ptr, stop_if_running=stop_if_running, cancel=cancel
+        )
         if response.get("ok"):
             response["data"].update(
                 {"log_group": log_group, "field": field, "value": value, "executed_query": query}

@@ -18,6 +18,10 @@ BLOCKED_KEYWORDS = ("DELETE", "INSERT", "UPDATE", "CREATE", "DROP", "ALTER", "GR
 
 EVENT_TYPE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
+# Attribute name for a trace lookup (e.g. `requestId`, `trace.id`). Emitted
+# backtick-quoted, so dots are fine; backticks and spaces are not.
+ATTRIBUTE_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]*$")
+
 # Longest NRQL accepted. Bounds the regex passes below on hostile input.
 MAX_NRQL_CHARS = 20_000
 

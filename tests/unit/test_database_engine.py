@@ -33,3 +33,71 @@ def test_engine_is_cached_per_dsn():
         assert engine_module.get_engine(first) is engine_module.get_engine(first)
         assert engine_module.get_engine(first) is not engine_module.get_engine(second)
     engine_module._engines.clear()
+
+
+class _FakeCursor:
+    def __init__(self, log: list[str]) -> None:
+        self.log = log
+        self.closed = False
+
+    def execute(self, sql: str) -> None:
+        self.log.append(sql)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _FakeDbapiConnection:
+    def __init__(self) -> None:
+        self.statements: list[str] = []
+        self.cursors: list[_FakeCursor] = []
+
+    def cursor(self) -> _FakeCursor:
+        cursor = _FakeCursor(self.statements)
+        self.cursors.append(cursor)
+        return cursor
+
+
+def test_every_new_connection_is_hardened():
+    """The connect listener makes each session read-only with timeouts. The
+    listener is captured and called with a fake DBAPI connection, so no
+    database is needed."""
+    settings = Settings(db_statement_timeout_ms=1234, db_idle_txn_timeout_ms=5678)
+    listeners = {}
+
+    def fake_listens_for(target, name):
+        def register(fn):
+            listeners[name] = fn
+            return fn
+
+        return register
+
+    with patch.object(engine_module.event, "listens_for", fake_listens_for):
+        engine_module._harden_session(Mock(), settings)
+    conn = _FakeDbapiConnection()
+
+    listeners["connect"](conn, None)
+
+    assert conn.statements == [
+        "SET default_transaction_read_only = on",
+        "SET statement_timeout = '1234ms'",
+        "SET idle_in_transaction_session_timeout = '5678ms'",
+    ]
+    assert conn.cursors[0].closed is True
+
+
+async def test_reset_engine_disposes_cached_engines():
+    disposed = []
+
+    class _Engine:
+        async def dispose(self):
+            disposed.append(self)
+
+    engine_module._engines.clear()
+    engine_module._engines[("a", 1, 1)] = _Engine()
+    engine_module._engines[("b", 1, 1)] = _Engine()
+
+    await engine_module.reset_engine()
+
+    assert len(disposed) == 2
+    assert engine_module._engines == {}

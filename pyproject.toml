@@ -40,6 +40,7 @@ opsinsight-mcp = "opsinsight.server:main_stdio"
 dev = [
     "pytest>=9.0",
     "pytest-asyncio>=0.24",
+    "pytest-cov>=7.1.0",
     "ruff>=0.14",
 ]
 
@@ -59,3 +60,13 @@ markers = [
     "integration: requires external services (e.g. docker-compose Postgres)",
 ]
 asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["opsinsight"]
+
+[tool.coverage.report]
+# CI fails below this. Unit tests only: introspect.py's catalog SQL is
+# covered by tests/integration, which needs a real Postgres.
+fail_under = 85
+show_missing = true
+skip_covered = true

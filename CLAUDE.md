@@ -14,11 +14,12 @@ execute them safely. See `docs/design.md` for the as-built design (§3.1 explain
 query generation is client-side, not server-side; §4.5 lists items from the original draft
 that are still not implemented).
 
-Cross-source correlation (DB + CloudWatch + New Relic) is currently entirely manual — the
-client model fans out to each source's tools and merges results itself, with no server-side
-guidance beyond the query cookbook. Composite tools `investigation_start` / `trace_request`
-and MCP prompts (`investigate_incident` / `trace_user_journey` / `slow_endpoint_rca`) are
-**not implemented**; don't assume they exist.
+Cross-source tracing of one identifier is `trace_request` (`service/trace_service.py`,
+`TraceService`): it composes the three source services (never their clients), runs them in
+parallel with a per-source timeout, and merges hits into one timeline; one source failing is
+reported in `data.sources` rather than failing the call. Anything broader is still merged by
+the client model. `investigation_start` and MCP prompts (`investigate_incident` /
+`trace_user_journey` / `slow_endpoint_rca`) are **not implemented**; don't assume they exist.
 
 ## Commands
 

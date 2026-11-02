@@ -28,6 +28,7 @@ EXPECTED_TOOLS = {
     "nr_list_event_types",
     "nr_describe_log_fields",
     "nr_run_nrql_query",
+    "trace_request",
 }
 
 

@@ -110,7 +110,7 @@ async def test_search_budget_is_shared_across_matches(monkeypatch: pytest.Monkey
         rows = [{"id": i, "note": "n" * 100} for i in range(20)]
         return IdentifierMatch(table=table, column="order_id", source_type="live", rows=rows, row_count=len(rows))
 
-    async def fake_search(identifier, id_type, settings):
+    async def fake_search(identifier, id_type, settings, limit=None):
         return IdentifierSearchResult(
             identifier=identifier,
             id_type=id_type,
