@@ -46,8 +46,9 @@ async def _check_postgres() -> bool:
     settings = get_settings()
     engine = create_async_engine(settings.db_dsn, connect_args={"timeout": 2})
     try:
-        async with engine.connect():
-            pass
+        async with asyncio.timeout(3):
+            async with engine.connect():
+                pass
         return True
     except (OperationalError, TimeoutError, OSError):
         return False
@@ -66,6 +67,8 @@ def pg_available() -> bool:
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     if os.environ.get("RUN_INTEGRATION_TESTS"):
+        return
+    if not any("integration" in item.keywords for item in items):
         return
     if not _postgres_available():
         skip_marker = pytest.mark.skip(reason="Configured Postgres not reachable")

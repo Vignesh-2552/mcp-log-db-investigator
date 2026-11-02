@@ -1,19 +1,64 @@
-from opsinsight import resources as _resources  # noqa: F401
-from opsinsight import tools as _tools  # noqa: F401
-from opsinsight.core.app import mcp
+import asyncio
+import sys
+
 from opsinsight.core.config import get_settings
 from opsinsight.core.logging_config import get_logger, setup_logging
-from opsinsight.core.rate_limit import build_rate_limiter
-from opsinsight.core.transport_security import (
-    InsecureHttpConfigError,
-    build_auth,
-    http_run_kwargs,
-)
 
 logger = get_logger("server")
 
+_USAGE = """\
+Usage: {prog} [command]
+
+Commands:
+  doctor     Run diagnostic pre-flight checks
+  (default)  Start the MCP server
+
+Options:
+  --help, -h       Show this help message
+  --version, -v    Show the version number
+"""
+
+
+def _handle_cli_flags(prog: str) -> bool:
+    """Handle ``doctor``, ``--help``, ``--version`` before starting the
+    MCP server.  Returns ``True`` if the process should exit afterwards."""
+    args = sys.argv[1:]
+
+    if not args:
+        return False
+
+    first = args[0].lower()
+
+    if first in ("--help", "-h"):
+        print(_USAGE.format(prog=prog), file=sys.stderr)
+        raise SystemExit(0)
+
+    if first in ("--version", "-v"):
+        import opsinsight
+
+        print(f"opsinsight-mcp {opsinsight.__version__}", file=sys.stderr)
+        raise SystemExit(0)
+
+    if first == "doctor":
+        from opsinsight.doctor import run_doctor
+
+        code = asyncio.run(run_doctor(get_settings()))
+        raise SystemExit(code)
+
+    return False
+
 
 def run(default_transport: str) -> None:
+    from opsinsight import resources as _resources  # noqa: F401
+    from opsinsight import tools as _tools  # noqa: F401
+    from opsinsight.core.app import mcp
+    from opsinsight.core.rate_limit import build_rate_limiter
+    from opsinsight.core.transport_security import (
+        InsecureHttpConfigError,
+        build_auth,
+        http_run_kwargs,
+    )
+
     settings = get_settings()
     setup_logging(settings)
     transport = settings.mcp_transport or default_transport
@@ -68,11 +113,13 @@ def run(default_transport: str) -> None:
 
 def main() -> None:
     """`investigation-server`: HTTP by default (Docker, hosted)."""
+    _handle_cli_flags("investigation-server")
     run("streamable-http")
 
 
 def main_stdio() -> None:
     """`opsinsight-mcp`: stdio by default, for clients that launch it via `uvx opsinsight-mcp`."""
+    _handle_cli_flags("opsinsight-mcp")
     run("stdio")
 
 

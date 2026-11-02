@@ -237,6 +237,35 @@ Requests are also checked against a Host/Origin allowlist (DNS-rebinding
 protection): `localhost`, `127.0.0.1` and `::1` always work; add a public
 hostname with `SERVER_ALLOWED_HOSTS`.
 
+### Pre-flight Diagnostic Check (`doctor`)
+
+To verify your `.env` configuration, network connectivity, authentication credentials, and safety guarantees across PostgreSQL, AWS CloudWatch, and New Relic before starting the server or committing to CI/CD:
+
+```powershell
+uv run opsinsight-mcp doctor
+# or
+uv run investigation-server doctor
+```
+
+Example output:
+
+```text
+opsinsight-mcp doctor (v0.2.0)
+================================================================================
+Service                Status    Latency    Details
+--------------------------------------------------------------------------------
+PostgreSQL             PASS      24ms       Connected (read-only verified, PostgreSQL 15.3)
+AWS CloudWatch         PASS      112ms      1 log group accessible (corksy)
+New Relic              PASS      185ms      NerdGraph API authenticated (Account: 7726086)
+Server Security        PASS      -          Loopback-only, PII redaction active, Rate limit: 5.0 rps
+================================================================================
+Result: 4 passed, 0 warnings, 0 errors. All configured services healthy!
+```
+
+Exit codes:
+- `0`: All configured checks passed (or were skipped if unconfigured).
+- `1`: One or more configured checks failed.
+
 ### Docker
 
 For a long-running HTTP server (shared by a team, or on a server host), run the
