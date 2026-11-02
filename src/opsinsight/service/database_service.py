@@ -174,10 +174,12 @@ class DatabaseService(BaseService):
             meta,
         )
 
-    async def search_by_identifier(self, identifier: str, id_type: str) -> dict:
+    async def search_by_identifier(self, identifier: str, id_type: str, limit: int | None = None) -> dict:
+        """`limit` caps rows per matched table (newest first where the table
+        has a timestamp column); defaults to DB_MAX_ROWS."""
         try:
             async with self._query_slot():
-                result = await introspect.search_by_identifier(identifier, id_type, self.settings)
+                result = await introspect.search_by_identifier(identifier, id_type, self.settings, limit=limit)
         except ToolError as e:
             return e.to_response()
         except SQLAlchemyError as e:

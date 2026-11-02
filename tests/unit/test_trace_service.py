@@ -43,6 +43,7 @@ class _FakeInsightsClient:
         self.bytes_scanned = bytes_scanned
         self.status = status
         self.started: dict | None = None
+        self.stopped: list[str] = []
 
     def start_query(self, **kwargs):
         self.started = kwargs
@@ -56,7 +57,7 @@ class _FakeInsightsClient:
         }
 
     def stop_query(self, queryId):
-        pass
+        self.stopped.append(queryId)
 
 
 class _FakeDbService:
@@ -65,9 +66,11 @@ class _FakeDbService:
         self.delay = delay
         self.exc = exc
         self.calls: list[tuple[str, str]] = []
+        self.limits: list[int | None] = []
 
-    async def search_by_identifier(self, identifier: str, id_type: str) -> dict:
+    async def search_by_identifier(self, identifier: str, id_type: str, limit: int | None = None) -> dict:
         self.calls.append((identifier, id_type))
+        self.limits.append(limit)
         if self.delay:
             await asyncio.sleep(self.delay)
         if self.exc:
@@ -270,6 +273,98 @@ async def test_limit_truncates_earliest_first():
     assert result["meta"]["truncated"] is True
     assert [e["summary"] for e in result["data"]["timeline"]] == ["m4", "m3"]
     assert any("Returned 2 of 4" in n for n in result["data"]["notes"])
+
+
+async def test_old_db_rows_do_not_push_in_window_logs_out():
+    old = NOW - timedelta(days=30)
+    db = _FakeDbService(
+        _db_ok([{"table": "public.orders", "column": "order_id",
+                 "rows": [{"order_id": "R-1", "created_at": old - timedelta(days=d)} for d in range(5)]}])
+    )
+    service, _, _ = _build(
+        cw_rows=[{"@timestamp": _cw_time(NOW - timedelta(minutes=m)), "@message": f"m{m}"} for m in (1, 2)],
+        db=db,
+    )
+    start, end = _window()
+
+    result = await service.trace_request(
+        "R-1", start, end, sources=["cloudwatch", "db"], db_id_type="order_id", limit=3
+    )
+
+    timeline = result["data"]["timeline"]
+    assert [e["source"] for e in timeline] == ["db", "cloudwatch", "cloudwatch"]  # still oldest first
+    assert timeline[0]["timestamp"] == _iso(old)  # the DB row closest to the window
+    assert result["meta"]["truncated"] is True
+    note = next(n for n in result["data"]["notes"] if n.startswith("Returned"))
+    assert "Returned 3 of 7" in note
+    assert "db_search_by_identifier" in note
+    assert "Narrow the window" not in note
+    assert db.limits == [3]
+
+
+async def test_db_executed_sql_is_reported():
+    sql = 'SELECT * FROM "public"."orders" WHERE "order_id" = :identifier ORDER BY "created_at" DESC'
+    db = _FakeDbService(
+        _db_ok([{"table": "public.orders", "column": "order_id", "executed_sql": sql,
+                 "rows": [{"order_id": "R-1", "created_at": NOW}]}])
+    )
+    service, _, _ = _build(db=db)
+    start, end = _window()
+
+    result = await service.trace_request("R-1", start, end, sources=["db"], db_id_type="order_id")
+
+    assert result["data"]["sources"]["db"]["executed_query"] == sql
+
+
+async def test_failed_and_timed_out_sources_still_report_their_query(monkeypatch: pytest.MonkeyPatch):
+    async def failing_nrql(query, settings):
+        raise RuntimeError("down")
+
+    service, _, _ = _build(nr_fn=failing_nrql)
+    start, end = _window()
+
+    result = await service.trace_request("R-1", start, end, sources=["cloudwatch", "newrelic"])
+
+    sources = result["data"]["sources"]
+    assert sources["newrelic"]["status"] == "error"
+    assert "WHERE `requestId` = 'R-1'" in sources["newrelic"]["executed_query"]
+
+
+async def test_cloudwatch_query_still_running_after_polling_is_stopped(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("CW_POLL_MAX_WAIT_S", "0")
+    get_settings.cache_clear()
+    cw_client = _FakeInsightsClient([], status="Running")
+    service, _, _ = _build(cw_client=cw_client)
+    start, end = _window()
+
+    result = await service.trace_request("R-1", start, end, sources=["cloudwatch"])
+
+    status = result["data"]["sources"]["cloudwatch"]
+    assert status["status"] == "running"
+    assert status["extra"]["query_id"] == "q-1"
+    assert 'filter requestId = "R-1"' in status["executed_query"]
+    assert cw_client.stopped == ["q-1"]
+
+
+async def test_cloudwatch_timeout_stops_the_insights_query(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("TRACE_SOURCE_TIMEOUT_S", "0.05")
+    monkeypatch.setenv("CW_POLL_MAX_WAIT_S", "60")
+    get_settings.cache_clear()
+    cw_client = _FakeInsightsClient([], status="Running")
+    service, _, _ = _build(cw_client=cw_client)
+    start, end = _window()
+
+    result = await service.trace_request("R-1", start, end, sources=["cloudwatch", "newrelic"])
+
+    status = result["data"]["sources"]["cloudwatch"]
+    assert status["status"] == "timeout"
+    assert "stopped" in status["error"]["message"]
+    assert 'filter requestId = "R-1"' in status["executed_query"]
+    for _ in range(100):  # the poll thread wakes as soon as it's cancelled
+        if cw_client.stopped:
+            break
+        await asyncio.sleep(0.02)
+    assert cw_client.stopped == ["q-1"]
 
 
 @pytest.mark.parametrize(

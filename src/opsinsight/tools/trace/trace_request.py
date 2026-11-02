@@ -29,6 +29,8 @@ async def trace_request(
     db_describe_table and pass it here. The DB is only searched when
     `db_id_type` (a column name such as "order_id") is given or configured, and
     DB rows are NOT filtered by the time window (see each event's `in_window`).
+    When `limit` cuts the result, in-window events are kept before DB rows
+    outside the window.
 
     One source failing does not fail the call: read `data.sources` for each
     source's status, executed query and error. Cite event timestamps and row

@@ -63,6 +63,7 @@ class IdentifierMatch(DictableMixin):
     source_type: str
     rows: list[dict[str, Any]]
     row_count: int
+    executed_sql: str | None = None
 
 
 @dataclass

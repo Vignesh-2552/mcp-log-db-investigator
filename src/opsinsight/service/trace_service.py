@@ -1,4 +1,5 @@
 import asyncio
+import threading
 from collections.abc import Awaitable
 from datetime import UTC, date, datetime
 from typing import Any
@@ -7,6 +8,7 @@ from opsinsight.core.config import Settings
 from opsinsight.core.errors import ToolError
 from opsinsight.core.logging_config import get_logger
 from opsinsight.integrations.cloudwatch.guardrail import clamp_window
+from opsinsight.integrations.database.constants import TIME_COLUMN_PREFERENCE
 from opsinsight.integrations.database.guardrail import fit_rows_to_budget
 from opsinsight.service.base import BaseService
 from opsinsight.service.cloudwatch_service import CloudWatchService
@@ -24,7 +26,7 @@ logger = get_logger("trace.service")
 SUMMARY_MAX_CHARS = 300
 
 # DB columns tried, in order, for a row's timestamp; then any other *_at column.
-DB_TIME_COLUMNS = ("created_at", "occurred_at", "event_time", "timestamp", "logged_at", "updated_at")
+DB_TIME_COLUMNS = TIME_COLUMN_PREFERENCE
 
 NR_MESSAGE_KEYS = ("message", "error.message", "name", "request.uri")
 
@@ -131,6 +133,11 @@ class TraceService(BaseService):
 
         statuses: dict[str, SourceStatus] = {}
         jobs: dict[str, Awaitable[dict]] = {}
+        # The query each source will run, known up front so a timeout or error
+        # can still report it. None when the inputs are invalid (the source's
+        # own call then returns the guardrail error).
+        queries: dict[str, str | None] = {}
+        cw_cancel = threading.Event()
         for source in TRACE_SOURCES:
             if source not in requested:
                 statuses[source] = SourceStatus(status="skipped", reason="not requested")
@@ -148,6 +155,9 @@ class TraceService(BaseService):
                     reason="no id type: pass db_id_type (e.g. 'order_id') or set TRACE_DB_ID_TYPE",
                 )
             elif source == "cloudwatch":
+                queries[source] = self._query_or_none(self._cw.trace_query, cw_field, value)
+                # Nothing resumes a trace's query_id, so a query still running
+                # when polling ends (or when this call times out) is stopped.
                 jobs[source] = asyncio.to_thread(
                     self._cw.get_trace_events,
                     log_groups,
@@ -156,13 +166,19 @@ class TraceService(BaseService):
                     start_dt.isoformat(),
                     end_dt.isoformat(),
                     max_events,
+                    stop_if_running=True,
+                    cancel=cw_cancel,
                 )
             elif source == "newrelic":
+                queries[source] = self._query_or_none(
+                    self._nr.trace_query, nr_event_type, nr_field, value, start_dt, end_dt
+                )
                 jobs[source] = self._nr.get_trace_events(
                     nr_event_type, nr_field, value, start_dt, end_dt, max_events
                 )
             else:
-                jobs[source] = self._db.search_by_identifier(value, db_id_type)
+                # Newest rows per table first, at most one timeline's worth.
+                jobs[source] = self._db.search_by_identifier(value, db_id_type, limit=max_events)
 
         if not jobs:
             return ToolError(
@@ -172,12 +188,17 @@ class TraceService(BaseService):
             ).to_response()
 
         names = list(jobs)
-        responses = await asyncio.gather(*(self._run_bounded(name, jobs[name]) for name in names))
+        cancels = {"cloudwatch": cw_cancel}
+        responses = await asyncio.gather(
+            *(self._run_bounded(name, jobs[name], cancels.get(name)) for name in names)
+        )
 
         events: list[TimelineEvent] = []
         notes: list[str] = []
         for name, response in zip(names, responses, strict=True):
             status, source_events = self._collect(name, response, log_groups, start_dt, end_dt)
+            if status.executed_query is None:
+                status.executed_query = queries.get(name)
             statuses[name] = status
             events.extend(source_events)
             if name == "db" and status.status == "ok":
@@ -198,17 +219,10 @@ class TraceService(BaseService):
                 "meta": {"sources": {k: v.to_dict() for k, v in statuses.items()}},
             }
 
-        dated = sorted(
-            (e for e in events if e.timestamp is not None),
-            key=lambda e: datetime.fromisoformat(e.timestamp),  # type: ignore[arg-type]
-        )
-        undated = [e for e in events if e.timestamp is None]
-        timeline, undated, truncated, total = self._fit(dated, undated, max_events)
+        timeline, undated, dropped = self._fit(events, max_events, start_dt, end_dt)
+        truncated = bool(dropped)
         if truncated:
-            notes.append(
-                f"Returned {len(timeline) + len(undated)} of {total} events (earliest first). "
-                "Narrow the window or limit `sources` to see the rest."
-            )
+            notes.append(self._truncation_note(len(timeline) + len(undated), len(events), dropped))
 
         result = TraceResult(
             value=value,
@@ -228,22 +242,37 @@ class TraceService(BaseService):
             },
         )
 
-    async def _run_bounded(self, name: str, job: Awaitable[dict]) -> dict:
+    @staticmethod
+    def _query_or_none(build: Any, *args: Any) -> str | None:
+        try:
+            return build(*args)
+        except ToolError:
+            return None
+
+    async def _run_bounded(
+        self, name: str, job: Awaitable[dict], cancel: threading.Event | None = None
+    ) -> dict:
         """Runs one source with the per-source timeout. Never raises: failures
         come back as error responses so the other sources still report."""
         timeout = self.settings.trace_source_timeout_s
         try:
             return await asyncio.wait_for(job, timeout)
         except TimeoutError:
-            # A CloudWatch thread can't be cancelled; it stops at CW_POLL_MAX_WAIT_S.
-            return {"ok": False, "timeout": True, "error": {"rule": "source_timeout",
-                    "message": f"{name} did not answer within {timeout:g}s."}}
+            message = f"{name} did not answer within {timeout:g}s."
+            if cancel is not None:
+                message += " Its query was stopped."
+            return {"ok": False, "timeout": True, "error": {"rule": "source_timeout", "message": message}}
         except ToolError as e:
             return e.to_response()
         except Exception as e:
             logger.exception("trace_request: %s failed", name)
             return {"ok": False, "error": {"rule": "source_failed",
                     "message": f"{name} failed: {type(e).__name__}."}}
+        finally:
+            # A thread can't be cancelled; this tells it to stop polling and
+            # stop its query. Harmless when the job already finished.
+            if cancel is not None:
+                cancel.set()
 
     def _collect(
         self,
@@ -261,11 +290,13 @@ class TraceService(BaseService):
         data = response["data"]
         if name == "cloudwatch":
             extra = {"bytes_scanned": data.get("bytes_scanned"), "log_groups": log_groups}
-            if data.get("status") == "Running":
+            if data.get("status") in ("Running", "Stopped"):
+                extra["query_id"] = data.get("query_id")
                 return SourceStatus(
                     status="running",
-                    reason="Insights query was still running when polling stopped "
-                    f"(query_id {data.get('query_id')}); retry with a narrower window.",
+                    reason="Insights query did not finish in time and was stopped; "
+                    "retry with a narrower window or fewer log groups.",
+                    executed_query=data.get("executed_query"),
                     extra=extra,
                 ), []
             origin = ", ".join(log_groups)
@@ -288,6 +319,7 @@ class TraceService(BaseService):
             return SourceStatus(status="ok", row_count=len(events), executed_query=data.get("executed_query")), events
 
         events = []
+        executed = [m["executed_sql"] for m in data.get("matches", []) if m.get("executed_sql")]
         for match in data.get("matches", []):
             for row in match.get("rows", []):
                 ts = self._db_row_time(row)
@@ -296,6 +328,7 @@ class TraceService(BaseService):
         return SourceStatus(
             status="ok",
             row_count=len(events),
+            executed_query=";\n".join(executed) or None,
             extra={
                 "tables": [m["table"] for m in data.get("matches", [])],
                 "truncated": bool((response.get("meta") or {}).get("truncated")),
@@ -333,15 +366,50 @@ class TraceService(BaseService):
         )
 
     def _fit(
-        self, dated: list[TimelineEvent], undated: list[TimelineEvent], max_events: int
-    ) -> tuple[list[TimelineEvent], list[TimelineEvent], bool, int]:
-        """Applies the event-count cap, then the byte budget, earliest first."""
-        total = len(dated) + len(undated)
-        ordered = (dated + undated)[:max_events]
-        kept, over_budget, _ = fit_rows_to_budget(
-            [e.to_dict() for e in ordered], self.settings.trace_max_response_bytes
-        )
-        kept_events = ordered[: len(kept)]
-        n_dated = min(len(dated), len(kept_events))
-        truncated = over_budget or len(kept_events) < total
-        return kept_events[:n_dated], kept_events[n_dated:], truncated, total
+        self,
+        events: list[TimelineEvent],
+        max_events: int,
+        start_dt: datetime,
+        end_dt: datetime,
+    ) -> tuple[list[TimelineEvent], list[TimelineEvent], list[TimelineEvent]]:
+        """Applies the event-count cap, then the byte budget. In-window events
+        are kept first (earliest first), then undated rows, then out-of-window
+        rows (closest to the window first), so old DB rows can't push this
+        window's logs out. Returns (timeline, undated, dropped)."""
+
+        def when(e: TimelineEvent) -> datetime:
+            return datetime.fromisoformat(e.timestamp)  # type: ignore[arg-type]
+
+        def distance(e: TimelineEvent) -> float:
+            ts = when(e)
+            return (start_dt - ts).total_seconds() if ts < start_dt else (ts - end_dt).total_seconds()
+
+        in_window = sorted((e for e in events if e.in_window), key=when)
+        undated = [e for e in events if e.timestamp is None]
+        outside = sorted((e for e in events if e.in_window is False), key=distance)
+        priority = in_window + undated + outside
+
+        capped = priority[:max_events]
+        kept, _, _ = fit_rows_to_budget([e.to_dict() for e in capped], self.settings.trace_max_response_bytes)
+        kept_events = capped[: len(kept)]
+        timeline = sorted((e for e in kept_events if e.timestamp is not None), key=when)
+        kept_undated = [e for e in kept_events if e.timestamp is None]
+        return timeline, kept_undated, priority[len(kept_events) :]
+
+    @staticmethod
+    def _truncation_note(returned: int, total: int, dropped: list[TimelineEvent]) -> str:
+        note = f"Returned {returned} of {total} events."
+        dropped_in_window = sum(1 for e in dropped if e.in_window)
+        dropped_other = len(dropped) - dropped_in_window
+        if dropped_in_window:
+            note += (
+                f" {dropped_in_window} later in-window events were dropped (earliest are kept). "
+                "Narrow the window or limit `sources` to see the rest."
+            )
+        if dropped_other:
+            note += (
+                f" {dropped_other} events outside the window or without a timestamp were dropped. "
+                "The window doesn't filter the database search; use db_search_by_identifier "
+                "to see those rows."
+            )
+        return note

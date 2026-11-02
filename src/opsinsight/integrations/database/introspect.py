@@ -16,6 +16,7 @@ from opsinsight.integrations.database.constants import (
     MAX_SEARCH_TARGETS,
     SEARCH_FANOUT_CONCURRENCY,
     STORE_ID_KEYS,
+    TIME_COLUMN_PREFERENCE,
     TLD_RE,
 )
 from opsinsight.integrations.database.engine import get_engine
@@ -43,6 +44,7 @@ from opsinsight.integrations.database.queries import (
     ENTITY_TABLE_SQL,
     LIST_TABLES_SQL,
     STORE_COLUMN_SEARCH_SQL,
+    TIME_COLUMN_SQL,
     build_identifier_lookup_sql,
     build_sample_rows_sql,
     build_store_lookup_sql,
@@ -208,6 +210,34 @@ async def _find_entity_tables(
         return [(row.schema, row.table_name, row.pk_column) for row in result]
 
 
+@ttl_cache(maxsize=64, ttl_seconds=lambda: get_settings().db_schema_cache_ttl_s)
+async def _find_time_columns(
+    engine: AsyncEngine, tables: tuple[tuple[str, str], ...]
+) -> dict[tuple[str, str], list[str]]:
+    """Timestamp/date columns per (schema, table), in column order."""
+    if not tables:
+        return {}
+    async with engine.connect() as conn:
+        result = await conn.execute(
+            text(TIME_COLUMN_SQL),
+            {"schemas": [s for s, _ in tables], "tables": [t for _, t in tables]},
+        )
+        found: dict[tuple[str, str], list[str]] = {}
+        for row in result:
+            found.setdefault((row.schema, row.table_name), []).append(row.column_name)
+        return found
+
+
+def pick_time_column(columns: list[str]) -> str | None:
+    """The column that best says when a row happened: a preferred name, else
+    the first `*_at` column, else none (a plain date column alone could be a
+    birthday or an expiry, so it isn't used)."""
+    for name in TIME_COLUMN_PREFERENCE:
+        if name in columns:
+            return name
+    return next((c for c in columns if c.endswith("_at")), None)
+
+
 def _is_historical_schema(schema: str, prefixes: frozenset[str]) -> bool:
     return any(schema.lower().startswith(p.lower()) for p in prefixes)
 
@@ -231,12 +261,16 @@ class _Probe:
     rows: list[dict[str, Any]] | None = None
     row_count: int | None = None
     source_type: str | None = None
+    executed_sql: str | None = None
 
 
 async def search_by_identifier(
-    identifier: str, id_type: str, settings: Settings | None = None
+    identifier: str, id_type: str, settings: Settings | None = None, limit: int | None = None
 ) -> IdentifierSearchResult:
+    """`limit` caps rows per table (never above DB_MAX_ROWS). Rows come back
+    newest first when the table has a timestamp column."""
     settings = settings or get_settings()
+    max_rows = min(limit, settings.db_max_rows) if limit else settings.db_max_rows
     historical_prefixes = settings.db_historical_schema_prefixes_set
     engine = get_engine(settings)
 
@@ -277,11 +311,13 @@ async def search_by_identifier(
 
     truncated = len(targets) > MAX_SEARCH_TARGETS
     targets = targets[:MAX_SEARCH_TARGETS]
+    time_columns = await _find_time_columns(engine, tuple(sorted({(s, t) for s, t, _ in targets})))
 
     async def _search_one(schema: str, table: str, column: str) -> _Probe:
         qualified = f"{schema}.{table}"
         source_type = _source_type(schema, historical_prefixes)
-        raw_sql = build_identifier_lookup_sql(schema, table, column)
+        order_column = pick_time_column(time_columns.get((schema, table), []))
+        raw_sql = build_identifier_lookup_sql(schema, table, column, order_column)
         # Even though schema/table/column come from the DB's own catalog
         # (not directly from the caller), route the generated SQL through
         # the same guardrail every other query goes through — defense in
@@ -292,7 +328,7 @@ async def search_by_identifier(
         # so execution keeps the original `:identifier`-parameterized SQL
         # and only borrows the guardrail's clamped row limit as a literal.
         try:
-            validated = validate_sql(raw_sql, max_rows=settings.db_max_rows)
+            validated = validate_sql(raw_sql, max_rows=max_rows)
             executable_sql = f"{raw_sql} LIMIT {validated.limit}"
             async with engine.connect() as conn:
                 result = await conn.execute(text(executable_sql), {"identifier": identifier})
@@ -326,6 +362,7 @@ async def search_by_identifier(
             rows=redact_rows(rows, settings),
             row_count=len(rows),
             source_type=source_type,
+            executed_sql=executable_sql,
         )
 
     # Each target gets its own pooled connection, run concurrently — with
@@ -335,7 +372,14 @@ async def search_by_identifier(
     # can't take the whole pool.
     probes = await _gather_bounded([_search_one(s, t, c) for s, t, c in targets], SEARCH_FANOUT_CONCURRENCY)
     matches = [
-        IdentifierMatch(table=p.table, column=p.column, source_type=p.source_type, rows=p.rows, row_count=p.row_count)
+        IdentifierMatch(
+            table=p.table,
+            column=p.column,
+            source_type=p.source_type,
+            rows=p.rows,
+            row_count=p.row_count,
+            executed_sql=p.executed_sql,
+        )
         for p in probes
         if not p.skipped and p.row_count
     ]

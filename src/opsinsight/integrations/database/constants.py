@@ -93,3 +93,7 @@ SEARCH_FANOUT_CONCURRENCY = 3
 STORE_ID_KEYS = ("store_id", "id")
 
 TLD_RE = re.compile(r"\.[a-zA-Z]{2,}$")
+
+# Columns tried, in order, as a row's "when did this happen" time: used to
+# order identifier lookups newest-first and to place DB rows on a timeline.
+TIME_COLUMN_PREFERENCE = ("created_at", "occurred_at", "event_time", "timestamp", "logged_at", "updated_at")

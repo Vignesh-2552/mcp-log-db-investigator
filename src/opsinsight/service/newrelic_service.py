@@ -141,6 +141,17 @@ class NewRelicService(BaseService):
         )
         return self.ok(result_model.to_dict(), {"row_count": len(rows)})
 
+    @staticmethod
+    def trace_query(event_type: str, field: str, value: str, since: datetime, until: datetime) -> str:
+        """The NRQL `get_trace_events` runs (before LIMIT is added). Raises
+        ToolError on a bad event type, field or value."""
+        validate_event_type(event_type)
+        validate_attribute_name(field)
+        literal = build_nrql_string_literal(value)
+        return build_trace_query(
+            event_type, field, literal, int(since.timestamp() * 1000), int(until.timestamp() * 1000)
+        )
+
     async def get_trace_events(
         self,
         event_type: str,
@@ -154,14 +165,9 @@ class NewRelicService(BaseService):
         Builds the NRQL from validated parts, then runs it through the same
         guardrail/window/redaction path as `run_nrql_query`."""
         try:
-            validate_event_type(event_type)
-            validate_attribute_name(field)
-            literal = build_nrql_string_literal(value)
+            query = self.trace_query(event_type, field, value, since, until)
         except ToolError as e:
             return e.to_response()
-        query = build_trace_query(
-            event_type, field, literal, int(since.timestamp() * 1000), int(until.timestamp() * 1000)
-        )
         response = await self.run_nrql_query(query, limit)
         if response.get("ok"):
             response["data"].update({"event_type": event_type, "field": field, "value": value})

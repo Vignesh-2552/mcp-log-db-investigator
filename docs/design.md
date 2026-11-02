@@ -171,7 +171,7 @@ There is **no application-level table allowlist**. Any table the dedicated read-
 
 | Tool | Arguments | Returns | Notes |
 |---|---|---|---|
-| `trace_request` | `value`, `start?`, `end?`, `sources?`, `cw_log_groups?`, `cw_field?`, `nr_event_type?`, `nr_field?`, `db_id_type?`, `limit: int = 200` | one merged timeline (oldest first, each event tagged `source`/`origin`/`in_window`), `undated` DB rows, per-source status + executed query | `TraceService` composes the three source services and runs them in parallel (`asyncio.gather`, CloudWatch in a thread), each under `TRACE_SOURCE_TIMEOUT_S`. Every query still goes through its source's guardrail/redaction. A failed/timed-out source is reported in `data.sources`; the call only fails when every searched source failed. One CloudWatch Insights query covers all log groups. DB rows are **not** window-filtered (`in_window` flags them). Capped at `TRACE_MAX_EVENTS` / `TRACE_MAX_RESPONSE_BYTES`, earliest first. |
+| `trace_request` | `value`, `start?`, `end?`, `sources?`, `cw_log_groups?`, `cw_field?`, `nr_event_type?`, `nr_field?`, `db_id_type?`, `limit: int = 200` | one merged timeline (oldest first, each event tagged `source`/`origin`/`in_window`), `undated` DB rows, per-source status + executed query | `TraceService` composes the three source services and runs them in parallel (`asyncio.gather`, CloudWatch in a thread), each under `TRACE_SOURCE_TIMEOUT_S`. Every query still goes through its source's guardrail/redaction. A failed/timed-out source is reported in `data.sources`; the call only fails when every searched source failed. One CloudWatch Insights query covers all log groups. DB rows are **not** window-filtered (`in_window` flags them); each matched table returns at most `limit` rows, newest first when it has a timestamp column. Capped at `TRACE_MAX_EVENTS` / `TRACE_MAX_RESPONSE_BYTES`, filled with in-window events first (earliest first), then undated rows, then out-of-window rows, so old DB rows can't push the window's logs out. A CloudWatch query still running when polling ends, or when the source times out, is stopped. `executed_query` is reported for failed and timed-out sources too, and for the DB (one statement per matched table). |
 
 ### 4.4 Resources
 
@@ -384,7 +384,7 @@ Every guardrail raises a `ToolError` subclass (`GuardrailError`, `CWGuardrailErr
 |---|---|
 | SQL / NRQL fails validation | Structured error naming the rule (`parse_error`, `root_not_select`, `blocked_function`, `not_select`, …) and the offending clause. The model can self-correct. |
 | Query timeout | `rule=query_timeout`; suggests narrowing the window and using `db_explain_query`. The EXPLAIN plan is **not** auto-attached. |
-| Logs Insights still running after poll budget | Return `ok: true` with `status: Running` and `query_id` rather than failing |
+| Logs Insights still running after poll budget | Return `ok: true` with `status: Running` and `query_id` rather than failing. `trace_request` instead stops the query (nothing resumes its `query_id`) and reports the source as `running` |
 | Log group not in allowlist | `rule=log_group_not_allowed` plus the list of allowed groups |
 | Bytes-scanned ceiling | `rule=bytes_scanned_ceiling_exceeded`; `meta.bytes_scanned` plus a suggested narrower window when scan rate is known |
 | Empty result | Return `rows: []` (and a `note` on inventory/grounding tools when the window was empty) — never fabricate |

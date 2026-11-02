@@ -46,6 +46,20 @@ WHERE c.relkind IN ('r', 'p')
 ORDER BY n.nspname, c.relname
 """
 
+# Timestamp/date columns of the given (schema, table) pairs, in column order.
+TIME_COLUMN_SQL = """\
+SELECT n.nspname AS schema, c.relname AS table_name, a.attname AS column_name
+FROM pg_attribute a
+JOIN pg_class c ON c.oid = a.attrelid
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE a.attnum > 0 AND NOT a.attisdropped
+  AND a.atttypid IN ('timestamptz'::regtype, 'timestamp'::regtype, 'date'::regtype)
+  AND (n.nspname::text, c.relname::text) IN (
+    SELECT * FROM unnest(CAST(:schemas AS text[]), CAST(:tables AS text[]))
+  )
+ORDER BY n.nspname, c.relname, a.attnum
+"""
+
 
 def quote_ident(name: str) -> str:
     """Double-quotes a SQL identifier, escaping embedded quotes. Postgres
@@ -62,11 +76,19 @@ def build_sample_rows_sql(schema: str | None, table: str) -> str:
     return f"SELECT * FROM {qualified_table} LIMIT :limit"
 
 
-def build_identifier_lookup_sql(schema: str, table: str, column: str) -> str:
-    return (
+def build_identifier_lookup_sql(
+    schema: str, table: str, column: str, order_column: str | None = None
+) -> str:
+    """`order_column` (a timestamp column) sorts newest first, so the row
+    limit keeps the most recent matches rather than whatever Postgres
+    happens to return first."""
+    sql = (
         f"SELECT * FROM {quote_ident(schema)}.{quote_ident(table)} "
         f"WHERE {quote_ident(column)} = :identifier"
     )
+    if order_column:
+        sql += f" ORDER BY {quote_ident(order_column)} DESC NULLS LAST"
+    return sql
 
 
 def build_store_lookup_sql(schema: str, table: str, column: str) -> str:
