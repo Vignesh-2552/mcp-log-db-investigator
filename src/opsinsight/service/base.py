@@ -5,7 +5,8 @@ from opsinsight.core.config import Settings
 
 class BaseService(ABC):
     """Common base for source-specific services (`DatabaseService`,
-    `CloudWatchService`, `NewRelicService`).
+    `CloudWatchLogsService`, `CloudWatchMetricsService`, `NewRelicService`,
+    `TraceService`).
 
     Owns the `Settings` each service needs (encapsulation: subclasses read
     `self.settings` instead of each method calling `get_settings()` itself)

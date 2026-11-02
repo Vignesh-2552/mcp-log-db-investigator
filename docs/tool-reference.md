@@ -861,7 +861,7 @@ Follow this flow when changing or adding a tool.
 5. Return structured errors by catching `ToolError` and calling `to_response()`.
 6. Redact sensitive output before returning rows or log messages.
 7. Add unit tests for guardrails and response behavior.
-8. Run `uv run pytest tests/unit`.
+8. Run `uv run pytest -m "not integration"`.
 
 Rules to keep:
 
@@ -873,16 +873,18 @@ Rules to keep:
 
 ## Where To Add Tests
 
+Tests sit beside the module they test (`foo.py` → `foo_test.py`). Paths are under `src/opsinsight/`.
+
 | Change Type | Test Location |
 |---|---|
-| DB SQL validation | `tests/unit/test_db_guardrail.py` |
-| DB introspection helper logic | `tests/unit/test_db_introspect.py` |
-| CloudWatch validation | `tests/unit/test_cw_guardrail.py` |
-| CloudWatch tool behavior | `tests/unit/test_cloudwatch_tools.py` |
-| New Relic validation | `tests/unit/test_newrelic_guardrail.py` |
-| New Relic tool behavior | `tests/unit/test_newrelic_tools.py` |
-| Redaction behavior | `tests/unit/test_redaction.py` |
-| Real Postgres behavior | `tests/integration/test_db_tools.py` |
+| DB SQL validation | `integrations/database/guardrail_test.py` |
+| DB introspection helper logic | `integrations/database/introspect_test.py` |
+| CloudWatch validation | `integrations/cloudwatch/guardrail_test.py` |
+| CloudWatch tool behavior | `service/cloudwatch_logs_service_test.py`, `service/cloudwatch_metrics_service_test.py` |
+| New Relic validation | `integrations/newrelic/guardrail_test.py` |
+| New Relic tool behavior | `service/newrelic_service_test.py` |
+| Redaction behavior | `core/redaction_test.py` |
+| Real Postgres behavior | `service/database_service_integration_test.py` |
 
 ## Quick Investigation Flow
 

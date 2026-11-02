@@ -50,12 +50,16 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/opsinsight"]
-exclude = ["**/__pycache__", "**/*.pyc"]
+# Tests live beside the code (`<module>_test.py`) but are never shipped.
+exclude = ["**/__pycache__", "**/*.pyc", "**/*_test.py", "**/conftest.py"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/opsinsight", "tests", "README.md", "LICENSE", "CHANGELOG.md"]
+include = ["src/opsinsight", "README.md", "LICENSE", "CHANGELOG.md"]
 
 [tool.pytest.ini_options]
+# Each test file sits next to the module it tests: foo.py -> foo_test.py.
+testpaths = ["src"]
+python_files = ["*_test.py"]
 markers = [
     "integration: requires external services (e.g. docker-compose Postgres)",
 ]
@@ -63,10 +67,11 @@ asyncio_mode = "auto"
 
 [tool.coverage.run]
 source = ["opsinsight"]
+omit = ["*_test.py", "*/conftest.py"]
 
 [tool.coverage.report]
 # CI fails below this. Unit tests only: introspect.py's catalog SQL is
-# covered by tests/integration, which needs a real Postgres.
+# covered by the `integration`-marked tests, which need a real Postgres.
 fail_under = 85
 show_missing = true
 skip_covered = true

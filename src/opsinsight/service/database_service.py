@@ -9,18 +9,18 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from opsinsight.core.config import Settings
 from opsinsight.core.errors import ToolError
+from opsinsight.core.limits import fit_rows_to_budget, truncate_row_cells
 from opsinsight.core.logging_config import get_logger
 from opsinsight.core.redaction import redact_rows
 from opsinsight.integrations.database import introspect
 from opsinsight.integrations.database.engine import get_engine
 from opsinsight.integrations.database.guardrail import (
     build_explain_sql,
-    fit_rows_to_budget,
     sqlalchemy_error_detail,
-    truncate_row_cells,
     validate_sql,
 )
 from opsinsight.service.base import BaseService
+from opsinsight.service.ports import DatabaseCatalog, EngineFactory
 
 logger = get_logger("database.service")
 
@@ -33,10 +33,21 @@ _TRUNCATION_HINT = (
 class DatabaseService(BaseService):
     """Business logic for every DB-backed tool: validate -> execute ->
     redact -> structured response. `tools/database/*.py` are thin MCP
-    wrappers that just construct this service and call a method."""
+    wrappers that just construct this service and call a method.
 
-    def __init__(self, settings: Settings) -> None:
+    The engine factory and the catalog (schema introspection) are
+    constructor-injected, defaulting to the real `get_engine` and the
+    `introspect` module, so tests can pass fakes instead of patching."""
+
+    def __init__(
+        self,
+        settings: Settings,
+        engine_factory: EngineFactory = get_engine,
+        catalog: DatabaseCatalog = introspect,
+    ) -> None:
         super().__init__(settings)
+        self._engine_factory = engine_factory
+        self._catalog = catalog
         # Caps DB tool calls in flight for this service instance (the
         # container keeps one per process), so a burst of calls fails fast
         # with `server_busy` instead of queueing on the connection pool.
@@ -97,7 +108,7 @@ class DatabaseService(BaseService):
     async def list_tables(self, schema: str | None = None) -> dict:
         try:
             async with self._query_slot():
-                tables = await introspect.list_tables(schema, self.settings)
+                tables = await self._catalog.list_tables(schema, self.settings)
         except ToolError as e:
             return e.to_response()
         except SQLAlchemyError as e:
@@ -107,7 +118,7 @@ class DatabaseService(BaseService):
     async def describe_table(self, table: str) -> dict:
         try:
             async with self._query_slot():
-                detail = await introspect.describe_table(table, self.settings)
+                detail = await self._catalog.describe_table(table, self.settings)
         except ToolError as e:
             return e.to_response()
         except SQLAlchemyError as e:
@@ -117,7 +128,7 @@ class DatabaseService(BaseService):
     async def sample_rows(self, table: str, limit: int = 5) -> dict:
         try:
             async with self._query_slot():
-                result = await introspect.sample_rows(table, limit, self.settings)
+                result = await self._catalog.sample_rows(table, limit, self.settings)
         except ToolError as e:
             return e.to_response()
         except SQLAlchemyError as e:
@@ -134,7 +145,7 @@ class DatabaseService(BaseService):
         try:
             validated = validate_sql(sql, self.settings.db_max_rows)
             explain_sql = build_explain_sql(validated.sql)
-            async with self._query_slot(), get_engine(self.settings).connect() as conn:
+            async with self._query_slot(), self._engine_factory(self.settings).connect() as conn:
                 plan = (await conn.execute(text(explain_sql))).scalar()
         except ToolError as e:
             return e.to_response()
@@ -147,7 +158,7 @@ class DatabaseService(BaseService):
             validated = validate_sql(sql, self.settings.db_max_rows, requested_limit=limit)
             async with self._query_slot():
                 started = time.perf_counter()
-                async with get_engine(self.settings).connect() as conn:
+                async with self._engine_factory(self.settings).connect() as conn:
                     result = await conn.execute(text(validated.sql))
                     columns = list(result.keys())
                     raw_rows = result.fetchall()
@@ -179,7 +190,7 @@ class DatabaseService(BaseService):
         has a timestamp column); defaults to DB_MAX_ROWS."""
         try:
             async with self._query_slot():
-                result = await introspect.search_by_identifier(identifier, id_type, self.settings, limit=limit)
+                result = await self._catalog.search_by_identifier(identifier, id_type, self.settings, limit=limit)
         except ToolError as e:
             return e.to_response()
         except SQLAlchemyError as e:
@@ -203,7 +214,7 @@ class DatabaseService(BaseService):
     async def resolve_store(self, name_or_domain: str) -> dict:
         try:
             async with self._query_slot():
-                result = await introspect.resolve_store(name_or_domain, self.settings)
+                result = await self._catalog.resolve_store(name_or_domain, self.settings)
         except ToolError as e:
             return e.to_response()
         except SQLAlchemyError as e:

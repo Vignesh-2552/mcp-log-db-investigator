@@ -29,12 +29,14 @@ jobs:
         run: uv run ruff check .
 
       - name: Unit tests
-        run: uv run pytest tests/unit -q --cov=opsinsight --cov-report=term
+        run: uv run pytest -m "not integration" -q --cov=opsinsight --cov-report=term
 
       - name: Integration tests (auto-skip if no reachable Postgres)
-        run: uv run pytest tests/integration -m integration -q
+        run: uv run pytest -m integration -q
 
   docker-build:
+    # Only build once lint and every test have passed; a failure there fails the whole run.
+    needs: lint-and-test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

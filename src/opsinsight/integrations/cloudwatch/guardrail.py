@@ -1,9 +1,10 @@
 import time
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 
 from opsinsight.core.errors import CWGuardrailError
 from opsinsight.core.logging_config import get_logger
+from opsinsight.core.time_window import clamp_window as _clamp_window
 from opsinsight.integrations.cloudwatch.constants import (
     BACKOFF_SCHEDULE,
     MAX_INSIGHTS_QUERY_CHARS,
@@ -31,41 +32,14 @@ def validate_log_groups(requested: list[str], allowlist: frozenset[str]) -> list
     return requested
 
 
-def _parse_iso8601(value: str) -> datetime:
-    try:
-        dt = datetime.fromisoformat(value)
-    except ValueError as e:
-        raise CWGuardrailError(
-            rule="invalid_timestamp", message=f"Could not parse timestamp: {value!r}.", detail=str(e)
-        ) from e
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=UTC)
-    return dt
-
-
 def clamp_window(
     start: str | None,
     end: str | None,
     default_hours: int,
     max_hours: int,
 ) -> tuple[datetime, datetime]:
-    """Parses/defaults the [start, end] window and enforces the hard cap
-    (default 24h, hard cap 7 days)."""
-    now = datetime.now(UTC)
-    end_dt = _parse_iso8601(end) if end else now
-    start_dt = _parse_iso8601(start) if start else end_dt - timedelta(hours=default_hours)
-
-    if start_dt >= end_dt:
-        raise CWGuardrailError(rule="invalid_window", message="start must be before end.")
-
-    span_hours = (end_dt - start_dt).total_seconds() / 3600
-    if span_hours > max_hours:
-        raise CWGuardrailError(
-            rule="window_too_large",
-            message=f"Requested window ({span_hours:.1f}h) exceeds the max of {max_hours}h.",
-            detail=f"Narrow the time window to at most {max_hours} hours.",
-        )
-    return start_dt, end_dt
+    """`core.time_window.clamp_window`, raising `CWGuardrailError`."""
+    return _clamp_window(start, end, default_hours, max_hours, error_cls=CWGuardrailError)
 
 
 def validate_insights_query(query: str) -> str:

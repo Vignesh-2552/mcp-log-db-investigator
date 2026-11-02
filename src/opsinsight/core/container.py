@@ -1,8 +1,10 @@
 from opsinsight.core.config import Settings, get_settings
-from opsinsight.service.cloudwatch_service import CloudWatchService
+from opsinsight.service.cloudwatch_logs_service import CloudWatchLogsService
+from opsinsight.service.cloudwatch_metrics_service import CloudWatchMetricsService
 from opsinsight.service.database_service import DatabaseService
 from opsinsight.service.newrelic_service import NewRelicService
 from opsinsight.service.trace_service import TraceService
+from opsinsight.service.trace_sources import default_trace_sources
 
 
 class Container:
@@ -11,15 +13,14 @@ class Container:
     a service (`get_container().database_service`) instead of constructing
     one themselves — that's the whole point of dependency inversion here:
     `tools/*` depend on "a container that hands out services", not on the
-    concrete `DatabaseService`/`CloudWatchService`/`NewRelicService`
-    constructors scattered across sixteen files.
+    concrete service constructors scattered across every tool file.
 
     Every dependency can also be injected directly through the constructor
     (a pre-built service, an override `Settings`), which is how tests that
     want a full request through a service without touching the real AWS/New
     Relic/DB clients can build an isolated `Container` instead of
     monkeypatching. Unit tests for an individual service still construct
-    that service directly (see `tests/unit/test_cloudwatch_tools.py`) — the
+    that service directly (see `service/cloudwatch_logs_service_test.py`) — the
     container exists for wiring the production object graph, not to
     replace the simpler constructor-injection seam each service already
     has.
@@ -34,13 +35,15 @@ class Container:
         self,
         settings: Settings | None = None,
         database_service: DatabaseService | None = None,
-        cloudwatch_service: CloudWatchService | None = None,
+        cloudwatch_logs_service: CloudWatchLogsService | None = None,
+        cloudwatch_metrics_service: CloudWatchMetricsService | None = None,
         newrelic_service: NewRelicService | None = None,
         trace_service: TraceService | None = None,
     ) -> None:
         self._settings_override = settings
         self._database_service = database_service
-        self._cloudwatch_service = cloudwatch_service
+        self._cloudwatch_logs_service = cloudwatch_logs_service
+        self._cloudwatch_metrics_service = cloudwatch_metrics_service
         self._newrelic_service = newrelic_service
         self._trace_service = trace_service
 
@@ -55,10 +58,16 @@ class Container:
         return self._database_service
 
     @property
-    def cloudwatch_service(self) -> CloudWatchService:
-        if self._cloudwatch_service is None:
-            self._cloudwatch_service = CloudWatchService(self.settings)
-        return self._cloudwatch_service
+    def cloudwatch_logs_service(self) -> CloudWatchLogsService:
+        if self._cloudwatch_logs_service is None:
+            self._cloudwatch_logs_service = CloudWatchLogsService(self.settings)
+        return self._cloudwatch_logs_service
+
+    @property
+    def cloudwatch_metrics_service(self) -> CloudWatchMetricsService:
+        if self._cloudwatch_metrics_service is None:
+            self._cloudwatch_metrics_service = CloudWatchMetricsService(self.settings)
+        return self._cloudwatch_metrics_service
 
     @property
     def newrelic_service(self) -> NewRelicService:
@@ -72,9 +81,12 @@ class Container:
         if self._trace_service is None:
             self._trace_service = TraceService(
                 self.settings,
-                database_service=self.database_service,
-                cloudwatch_service=self.cloudwatch_service,
-                newrelic_service=self.newrelic_service,
+                default_trace_sources(
+                    self.settings,
+                    database_service=self.database_service,
+                    cloudwatch_logs_service=self.cloudwatch_logs_service,
+                    newrelic_service=self.newrelic_service,
+                ),
             )
         return self._trace_service
 

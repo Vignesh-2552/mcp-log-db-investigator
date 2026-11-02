@@ -2,7 +2,8 @@ import pytest
 
 from opsinsight.core.config import Settings, get_settings
 from opsinsight.core.container import Container, get_container, reset_container
-from opsinsight.service.cloudwatch_service import CloudWatchService
+from opsinsight.service.cloudwatch_logs_service import CloudWatchLogsService
+from opsinsight.service.cloudwatch_metrics_service import CloudWatchMetricsService
 from opsinsight.service.database_service import DatabaseService
 from opsinsight.service.newrelic_service import NewRelicService
 
@@ -30,14 +31,16 @@ def test_reset_container_forces_a_fresh_container():
 def test_container_caches_each_service_instance():
     container = Container()
     assert container.database_service is container.database_service
-    assert container.cloudwatch_service is container.cloudwatch_service
+    assert container.cloudwatch_logs_service is container.cloudwatch_logs_service
+    assert container.cloudwatch_metrics_service is container.cloudwatch_metrics_service
     assert container.newrelic_service is container.newrelic_service
 
 
 def test_container_builds_the_expected_service_types():
     container = Container()
     assert isinstance(container.database_service, DatabaseService)
-    assert isinstance(container.cloudwatch_service, CloudWatchService)
+    assert isinstance(container.cloudwatch_logs_service, CloudWatchLogsService)
+    assert isinstance(container.cloudwatch_metrics_service, CloudWatchMetricsService)
     assert isinstance(container.newrelic_service, NewRelicService)
 
 

@@ -1,13 +1,11 @@
-"""CloudWatchService methods not covered in test_cloudwatch_tools.py:
-list_log_groups, filter_events, get_metric_stats and AWS error handling."""
+"""CloudWatchLogsService: list_log_groups, filter_events and AWS error handling."""
 
-from datetime import UTC, datetime, timedelta
 
 import pytest
 from botocore.exceptions import ClientError
 
 from opsinsight.core.config import get_settings
-from opsinsight.service.cloudwatch_service import CloudWatchService
+from opsinsight.service.cloudwatch_logs_service import CloudWatchLogsService
 
 ALLOWED = "/aws/ecs/allowed"
 
@@ -54,25 +52,8 @@ class _LogsClient:
         return {"events": self.events}
 
 
-class _MetricsClient:
-    def __init__(self, datapoints=None, exc=None):
-        self.datapoints = datapoints or []
-        self.exc = exc
-        self.kwargs = None
-
-    def get_metric_statistics(self, **kwargs):
-        if self.exc:
-            raise self.exc
-        self.kwargs = kwargs
-        return {"Datapoints": self.datapoints}
-
-
-def _cw(logs=None, metrics=None) -> CloudWatchService:
-    return CloudWatchService(
-        get_settings(),
-        logs_client_factory=lambda s: logs,
-        metrics_client_factory=lambda s: metrics,
-    )
+def _cw(logs=None) -> CloudWatchLogsService:
+    return CloudWatchLogsService(get_settings(), logs_client_factory=lambda s: logs)
 
 
 def test_list_log_groups_only_returns_allowlisted_groups():
@@ -133,35 +114,3 @@ def test_filter_events_reports_aws_errors():
     assert result["ok"] is False
 
 
-def test_get_metric_stats_sorts_datapoints_and_serializes_timestamps():
-    t = datetime(2026, 10, 1, tzinfo=UTC)
-    metrics = _MetricsClient(
-        datapoints=[{"Timestamp": t + timedelta(minutes=5), "Average": 2.0}, {"Timestamp": t, "Average": 1.0}]
-    )
-    end = datetime.now(UTC)
-
-    result = _cw(metrics=metrics).get_metric_stats(
-        "AWS/ECS", "CPUUtilization", {"ServiceName": "api"}, 60,
-        (end - timedelta(hours=1)).isoformat(), end.isoformat(),
-    )
-
-    assert result["ok"] is True
-    assert [d["Average"] for d in result["data"]["datapoints"]] == [1.0, 2.0]
-    assert result["data"]["datapoints"][0]["Timestamp"] == t.isoformat()
-    assert metrics.kwargs["Dimensions"] == [{"Name": "ServiceName", "Value": "api"}]
-
-
-def test_get_metric_stats_rejects_oversized_window():
-    end = datetime.now(UTC)
-    result = _cw(metrics=_MetricsClient()).get_metric_stats(
-        "AWS/ECS", "CPU", {}, 60, (end - timedelta(days=30)).isoformat(), end.isoformat()
-    )
-    assert result["error"]["rule"] == "window_too_large"
-
-
-def test_get_metric_stats_reports_aws_errors():
-    end = datetime.now(UTC)
-    result = _cw(metrics=_MetricsClient(exc=_client_error())).get_metric_stats(
-        "AWS/ECS", "CPU", {}, 60, (end - timedelta(hours=1)).isoformat(), end.isoformat()
-    )
-    assert result["ok"] is False

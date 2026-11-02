@@ -10,4 +10,4 @@ def cw_describe_log_fields(log_group: str) -> dict:
     shape's own field-frequency table, to ground Logs Insights query
     generation. Boosts the sample with error/fatal-level events so rare-but-
     important shapes aren't drowned out by a purely random sample."""
-    return get_container().cloudwatch_service.describe_log_fields(log_group)
+    return get_container().cloudwatch_logs_service.describe_log_fields(log_group)

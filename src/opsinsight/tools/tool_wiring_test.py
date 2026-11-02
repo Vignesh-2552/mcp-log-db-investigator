@@ -44,7 +44,8 @@ def services(monkeypatch: pytest.MonkeyPatch):
     get_settings.cache_clear()
     fakes = {
         "database_service": _Recorder(is_async=True),
-        "cloudwatch_service": _Recorder(is_async=False),
+        "cloudwatch_logs_service": _Recorder(is_async=False),
+        "cloudwatch_metrics_service": _Recorder(is_async=False),
         "newrelic_service": _Recorder(is_async=True),
         "trace_service": _Recorder(is_async=True),
     }
@@ -66,20 +67,20 @@ CASES = [
      "search_by_identifier", ("42", "order_id"), {}),
     ("db_resolve_store", {"name_or_domain": "shop.example"}, "database_service", "resolve_store",
      ("shop.example",), {}),
-    ("cw_list_log_groups", {"prefix": "/aws"}, "cloudwatch_service", "list_log_groups", ("/aws",), {}),
-    ("cw_describe_log_fields", {"log_group": "/g"}, "cloudwatch_service", "describe_log_fields", ("/g",), {}),
+    ("cw_list_log_groups", {"prefix": "/aws"}, "cloudwatch_logs_service", "list_log_groups", ("/aws",), {}),
+    ("cw_describe_log_fields", {"log_group": "/g"}, "cloudwatch_logs_service", "describe_log_fields", ("/g",), {}),
     ("cw_run_insights_query",
      {"log_groups": ["/g"], "query": "fields @message", "start": "s", "end": "e", "limit": 5},
-     "cloudwatch_service", "run_insights_query", (["/g"], "fields @message", "s", "e", 5, False), {}),
+     "cloudwatch_logs_service", "run_insights_query", (["/g"], "fields @message", "s", "e", 5, False), {}),
     ("cw_get_trace_events",
      {"log_group": "/g", "field": "requestId", "value": "r1", "start": "s", "end": "e"},
-     "cloudwatch_service", "get_trace_events", ("/g", "requestId", "r1", "s", "e", 200, False), {}),
-    ("cw_filter_events", {"log_group": "/g", "pattern": "ERROR", "minutes": 5}, "cloudwatch_service",
+     "cloudwatch_logs_service", "get_trace_events", ("/g", "requestId", "r1", "s", "e", 200, False), {}),
+    ("cw_filter_events", {"log_group": "/g", "pattern": "ERROR", "minutes": 5}, "cloudwatch_logs_service",
      "filter_events", ("/g", "ERROR", 5), {}),
     ("cw_get_metric_stats",
      {"namespace": "AWS/ECS", "metric": "CPU", "dimensions": {"Svc": "a"}, "period": 60, "start": "s",
       "end": "e"},
-     "cloudwatch_service", "get_metric_stats", ("AWS/ECS", "CPU", {"Svc": "a"}, 60, "s", "e"), {}),
+     "cloudwatch_metrics_service", "get_metric_stats", ("AWS/ECS", "CPU", {"Svc": "a"}, 60, "s", "e"), {}),
     ("nr_list_event_types", {"hours": 6}, "newrelic_service", "list_event_types", (6,), {}),
     ("nr_describe_log_fields", {"event_type": "Log", "hours": 2}, "newrelic_service",
      "describe_log_fields", ("Log", 2), {}),
@@ -93,7 +94,7 @@ CASES = [
 
 
 def test_every_registered_tool_has_a_wiring_case():
-    from tests.unit.test_audit import EXPECTED_TOOLS
+    from opsinsight.core.audit_test import EXPECTED_TOOLS
 
     assert {case[0] for case in CASES} == EXPECTED_TOOLS
 
@@ -143,4 +144,4 @@ async def test_log_groups_resource_reuses_the_list_tool(services):
         [content] = await client.read_resource("logs://groups")
 
     assert json.loads(content.text)["data"]["method"] == "list_log_groups"
-    assert services["cloudwatch_service"].calls == [("list_log_groups", (None,), {})]
+    assert services["cloudwatch_logs_service"].calls == [("list_log_groups", (None,), {})]

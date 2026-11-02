@@ -15,9 +15,12 @@ query generation is client-side, not server-side; §4.5 lists items from the ori
 that are still not implemented).
 
 Cross-source tracing of one identifier is `trace_request` (`service/trace_service.py`,
-`TraceService`): it composes the three source services (never their clients), runs them in
+`TraceService`): it loops over registered `TraceSource` adapters (`service/trace_sources.py`,
+one per source, each wrapping that source's *service*, never its client), runs them in
 parallel with a per-source timeout, and merges hits into one timeline; one source failing is
-reported in `data.sources` rather than failing the call. Anything broader is still merged by
+reported in `data.sources` rather than failing the call. `TraceService` has no source-specific
+code: adding a source to `trace_request` means writing one adapter and registering it in
+`default_trace_sources()`. Anything broader is still merged by
 the client model. `investigation_start` and MCP prompts (`investigate_incident` /
 `trace_user_journey` / `slow_endpoint_rca`) are **not implemented**; don't assume they exist.
 
@@ -26,13 +29,20 @@ the client model. `investigation_start` and MCP prompts (`investigate_incident` 
 ```powershell
 uv sync                                          # install deps
 copy .env.example .env                           # then fill in DB_URL, AWS_*, NEW_RELIC_*
-uv run pytest tests/unit                         # guardrail/redaction tests, no external deps
-uv run pytest tests/unit/test_db_guardrail.py -q # run a single test file
-uv run pytest tests/unit -k test_limit_clamped    # run a single test by name
-uv run pytest tests/integration -m integration    # requires a reachable Postgres; auto-skips otherwise
+uv run pytest -m "not integration"            # unit tests, no external deps
+uv run pytest src/opsinsight/integrations/database/guardrail_test.py -q  # one test file
+uv run pytest -k test_limit_clamped              # one test by name
+uv run pytest -m integration                     # requires a reachable Postgres; auto-skips otherwise
 uv run ruff check .                              # lint
-uv run investigation-server                      # start the MCP server (streamable HTTP, :8000/mcp by default)
+uv run investigation-server                      # start the MCP server (streamable HTTP, :8001/mcp by default)
 ```
+
+**Tests live beside the code they test**: `foo.py` → `foo_test.py` in the same folder
+(`pytest` collects `*_test.py` under `src/`; there is no `tests/` folder). A module may have
+more than one test file, named `<module>_<topic>_test.py` (e.g.
+`service/database_service_limits_test.py`); tests needing a real Postgres are
+`*_integration_test.py` and marked `integration`. Test files and `conftest.py` are excluded
+from the wheel, the Docker image and coverage.
 
 `asyncio_mode = "auto"` is set in `pyproject.toml` — async test functions run without needing
 `@pytest.mark.asyncio`.
@@ -48,25 +58,33 @@ Paths below without a `src/` prefix are relative to that package directory.
 (actual network/DB I/O). Guardrail functions never touch the network; service methods never
 build a query without passing it through the guardrail first.
 
-**`src/opsinsight/service/` holds one class per source** — `DatabaseService`, `CloudWatchService`,
-`NewRelicService` (`service/database_service.py`, `service/cloudwatch_service.py`,
-`service/newrelic_service.py`), all inheriting `BaseService` (`service/base.py`) for the
+**`src/opsinsight/service/` holds one class per source** — `DatabaseService`,
+`CloudWatchLogsService`, `CloudWatchMetricsService`, `NewRelicService`
+(`service/database_service.py`, `service/cloudwatch_logs_service.py`,
+`service/cloudwatch_metrics_service.py`, `service/newrelic_service.py`), all inheriting `BaseService` (`service/base.py`) for the
 shared `Settings` handle and the `ok(data, meta)` success-envelope helper. This is where a
 tool's actual logic (validate → execute → redact → structured response) lives; error-response
 translation for that source's exception family (`SQLAlchemyError` /
 `BotoCoreError`+`ClientError` / `httpx.HTTPError`) is a private method on the same class
-(`_sqlalchemy_error_response`, `_aws_error_response`, `_httpx_error_response`) rather than a
+(`_sqlalchemy_error_response`, `_aws_error_response` — shared by both CloudWatch services via
+`service/cloudwatch_common.py` — `_httpx_error_response`) rather than a
 shared abstract method, since the three sources don't share an exception type — forcing one
 would violate interface segregation for no benefit. Cross-tool logic that one source's several
 tools share (e.g. CloudWatch's `run_insights_query`, used by both `cw_run_insights_query` and
 `cw_get_trace_events`) is just another method on that source's service class, called from the
 other public methods — composition over duplicating the polling/cost-ceiling logic per tool.
-Network/DB clients are **constructor-injected** on `CloudWatchService`
-(`logs_client_factory`/`metrics_client_factory`, default the real boto3 factories) and
-`NewRelicService` (`run_nrql_fn`, defaults the real NerdGraph client) — dependency inversion,
-so unit tests pass a fake client into the constructor instead of monkeypatching module state;
-`DatabaseService` has no such seam because its only unit-level tests are integration tests
-against a real Postgres (see `tests/integration/test_db_tools.py`).
+Network/DB clients are **constructor-injected** on every service — `DatabaseService`
+(`engine_factory`, `catalog`; defaults `get_engine` and the `introspect` module),
+`CloudWatchLogsService` (`logs_client_factory`), `CloudWatchMetricsService`
+(`metrics_client_factory`) and `NewRelicService` (`run_nrql_fn`) — dependency inversion, so
+unit tests pass a fake into the constructor instead of monkeypatching module state. The
+injected types are Protocols in `service/ports.py` (`LogsClient`, `MetricsClient`,
+`NrqlRunner`, `EngineFactory`, `DatabaseCatalog`) listing only the methods services call.
+
+**Source-agnostic helpers live in `core/`**, not in one source's package: `core/time_window.py`
+(`clamp_window`, `parse_iso8601`; takes an `error_cls` so CloudWatch still raises
+`CWGuardrailError`) and `core/limits.py` (`truncate_cell`, `truncate_row_cells`,
+`fit_rows_to_budget`). A service must not import another source's `integrations/*` module.
 
 **`tools/*` are thin MCP wrappers, nothing else**: each source is its own package
 (`tools/database/`, `tools/cloudwatch/`, `tools/newrelic/`) with **one file per tool**, named
@@ -83,7 +101,8 @@ TYPES`, which isn't a `SELECT` and would otherwise be rejected by `validate_nrql
 
 **`core/container.py` is the composition root** — the one place that constructs services and
 wires their dependencies. `Container` lazily builds and caches (singleton-scoped, per
-container instance) `database_service`/`cloudwatch_service`/`newrelic_service`, each backed by
+container instance) `database_service`/`cloudwatch_logs_service`/`cloudwatch_metrics_service`/
+`newrelic_service`/`trace_service`, each backed by
 `self.settings` (which resolves through `get_settings()` unless a `Settings` override was
 passed to the constructor). Every dependency — `settings`, or a fully pre-built service — can
 also be injected via `Container(...)` keyword arguments; tests that want an isolated object
@@ -92,7 +111,7 @@ graph build their own `Container` rather than reaching for the process-wide one.
 (`get_container().database_service.list_tables(...)`); `reset_container()` drops it so the
 next `get_container()` rebuilds against current `Settings` — call it after
 `get_settings.cache_clear()` in any test that routes through the container, the same way
-`reset_engine()` is called for the DB engine (`tests/conftest.py`'s `settings_override` does
+`reset_engine()` is called for the DB engine (`src/opsinsight/conftest.py`'s `settings_override` does
 both). This container is *not* the seam individual service unit tests use — those construct
 the service directly with an injected fake client (see below) since that's simpler when you
 only need one service; the container exists for wiring the full tools → services graph in
@@ -114,8 +133,8 @@ imported by every tool/resource/prompt module as `from opsinsight.core.app impor
 specifically so `server.py` (which is also the entry point run via `-m`/`investigation-server`)
 never gets circularly imported — see the comment in `core/app.py` if touching this.
 
-**Registration is import-side-effect based**: `src/opsinsight/tools/__init__.py` imports the three
-source packages (`cloudwatch`, `database`, `newrelic`); each package's own `__init__.py` in
+**Registration is import-side-effect based**: `src/opsinsight/tools/__init__.py` imports the four
+tool packages (`cloudwatch`, `database`, `newrelic`, `trace`); each package's own `__init__.py` in
 turn imports every tool file in it purely for the `@mcp.tool()` decorator to run, and
 re-exports the tool function so it can also be imported as `from opsinsight.tools.<source> import
 <tool_name>`. `src/opsinsight/resources/__init__.py` does the same for `@mcp.resource()`. `server.py`
@@ -135,9 +154,9 @@ successful results always follow `{"ok": True, "data": {...}, "meta": {...}}` (b
 `@lru_cache def get_settings()`. Tests that change env vars must call
 `get_settings.cache_clear()` (and, for DB tests, `await reset_engine()` from
 `integrations/database/engine.py`; for real boto3 clients, `reset_clients()` from
-`integrations/cloudwatch/client.py`) — see `tests/conftest.py`'s `settings_override` fixture
-and `tests/unit/test_newrelic_tools.py` for the pattern. Unit tests construct the service
-class directly (`CloudWatchService(get_settings(), logs_client_factory=lambda s: fake_client)`,
+`integrations/cloudwatch/client.py`) — see `src/opsinsight/conftest.py`'s `settings_override` fixture
+and `src/opsinsight/service/newrelic_service_test.py` for the pattern. Unit tests construct the service
+class directly (`CloudWatchLogsService(get_settings(), logs_client_factory=lambda s: fake_client)`,
 `NewRelicService(get_settings(), run_nrql_fn=fake_run_nrql)`) rather than monkeypatching —
 prefer that constructor-injection seam over `monkeypatch.setattr` when a new service method
 needs a fake client/network call in tests.
@@ -175,7 +194,7 @@ ago` when absent; unparseable `SINCE` forms are rejected (`unsupported_time_rang
 `server.run()` for the HTTP transport: `MCP_AUTH_TOKEN` bearer auth (fail closed on a non-loopback
 `SERVER_HOST` without it) and always-strict Host/Origin checks. **Audit**: `core/audit.py`'s
 `AuditMiddleware` (registered on the shared `mcp` in `core/app.py`) logs one JSON event per tool
-call/resource read. `tests/unit/test_audit.py` pins the registered tool inventory — adding a tool
+call/resource read. `src/opsinsight/core/audit_test.py` pins the registered tool inventory — adding a tool
 means updating that set after reviewing it for authorization, redaction and audit.
 
 **DB safety is defense-in-depth**: `sqlglot`-based AST validation (single `SELECT`/`WITH...SELECT`/

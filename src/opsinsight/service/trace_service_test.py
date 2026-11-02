@@ -10,9 +10,11 @@ from opsinsight.integrations.newrelic.guardrail import (
     validate_attribute_name,
     validate_nrql,
 )
-from opsinsight.service.cloudwatch_service import CloudWatchService
+from opsinsight.service.cloudwatch_logs_service import CloudWatchLogsService
 from opsinsight.service.newrelic_service import NewRelicService
+from opsinsight.service.trace_models import SourceResult, SourceStatus, TraceJob
 from opsinsight.service.trace_service import TraceService
+from opsinsight.service.trace_sources import default_trace_sources, timeline_event
 
 LOG_GROUP = "/aws/ecs/test-svc"
 NOW = datetime.now(UTC).replace(microsecond=0)
@@ -101,12 +103,13 @@ def _build(
         nr_queries.append(query)
         return {"results": nr_rows or [], "metadata": {}}
 
-    service = TraceService(
+    sources = default_trace_sources(
         settings,
         database_service=db or _FakeDbService(_db_ok([])),
-        cloudwatch_service=CloudWatchService(settings, logs_client_factory=lambda s: cw_client),
+        cloudwatch_logs_service=CloudWatchLogsService(settings, logs_client_factory=lambda s: cw_client),
         newrelic_service=NewRelicService(settings, run_nrql_fn=nr_fn or fake_run_nrql),
     )
+    service = TraceService(settings, sources)
     return service, cw_client, nr_queries
 
 
@@ -426,3 +429,55 @@ def test_nrql_literal_rejects_newlines():
 def test_attribute_name_rejects_unsafe_names(name):
     with pytest.raises(NewRelicGuardrailError):
         validate_attribute_name(name)
+
+
+class _StaticSource:
+    """A made-up extra source, to show new sources plug in without changing TraceService."""
+
+    name = "static"
+
+    def __init__(self, rows: list[dict]):
+        self.rows = rows
+
+    def skip_reason(self, request):
+        return None
+
+    def planned_query(self, request):
+        return "static lookup"
+
+    def start(self, request):
+        async def run():
+            return {"ok": True, "data": {"rows": self.rows}, "meta": {}}
+
+        return TraceJob(run())
+
+    def collect(self, response, request):
+        events = [
+            timeline_event(self.name, "static", row["ts"], row["msg"], row, request)
+            for row in response["data"]["rows"]
+        ]
+        return SourceResult(SourceStatus(status="ok", row_count=len(events)), events)
+
+
+async def test_a_new_source_plugs_in_without_changing_trace_service():
+    t = NOW - timedelta(minutes=5)
+    service = TraceService(get_settings(), [_StaticSource([{"ts": t.isoformat(), "msg": "hello"}])])
+    start, end = _window()
+
+    result = await service.trace_request("R-1", start, end)
+
+    assert result["ok"] is True
+    assert [e["source"] for e in result["data"]["timeline"]] == ["static"]
+    assert result["data"]["sources"]["static"]["executed_query"] == "static lookup"
+
+
+async def test_unknown_source_lists_registered_sources():
+    service = TraceService(get_settings(), [_StaticSource([])])
+    result = await service.trace_request("R-1", sources=["cloudwatch"])
+    assert result["error"]["rule"] == "unknown_source"
+    assert result["error"]["allowed"] == ["static"]
+
+
+def test_duplicate_source_names_are_rejected():
+    with pytest.raises(ValueError, match="Duplicate"):
+        TraceService(get_settings(), [_StaticSource([]), _StaticSource([])])

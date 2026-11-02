@@ -62,7 +62,7 @@ The server is connected to **Cursor** and/or **Claude Desktop**, so the engineer
 │        │                │                                            │
 │  ┌─────▼────────────────▼────────────────────────────────────────┐   │
 │  │  Container (composition root)                                 │   │
-│  │  DatabaseService / CloudWatchService / NewRelicService        │   │
+│  │  Database / CloudWatchLogs+Metrics / NewRelic / Trace services│   │
 │  └─────┬─────────────────────┬─────────────────────┬─────────────┘   │
 │        │                     │                     │                 │
 │  ┌─────▼────────┐     ┌──────▼─────────┐    ┌──────▼──────────┐      │
@@ -110,7 +110,7 @@ tools/*  →  service/*  →  integrations/<source>/guardrail.py  →  integrati
 | Layer | Role | Rule |
 |---|---|---|
 | `src/opsinsight/tools/<source>/` | Thin `@mcp.tool()` wrappers | One file per tool, named after the tool. Docstring + parameter schema + one call into the source's service. No business logic. |
-| `src/opsinsight/service/` | Business logic | One class per source (`DatabaseService`, `CloudWatchService`, `NewRelicService`), all inheriting `BaseService` for `Settings` and the `ok(data, meta)` envelope. Validate → execute → redact → structured response. |
+| `src/opsinsight/service/` | Business logic | One class per source (`DatabaseService`, `CloudWatchLogsService`, `CloudWatchMetricsService`, `NewRelicService`), plus `TraceService`, all inheriting `BaseService` for `Settings` and the `ok(data, meta)` envelope. Validate → execute → redact → structured response. |
 | `src/opsinsight/integrations/<source>/guardrail.py` | Validate / reject | Pure functions, no I/O. Service methods never execute a user-supplied query without passing it through the guardrail first. |
 | `src/opsinsight/integrations/<source>/client.py` or `engine.py` | Network / DB I/O | SQLAlchemy+asyncpg, boto3, httpx NerdGraph. |
 
@@ -118,11 +118,11 @@ tools/*  →  service/*  →  integrations/<source>/guardrail.py  →  integrati
 
 Cross-tool logic that one source's several tools share (e.g. CloudWatch's `run_insights_query`, used by both `cw_run_insights_query` and `cw_get_trace_events`) is another method on that source's service class — composition over duplicating polling/cost-ceiling logic.
 
-Network/DB clients are **constructor-injected** on `CloudWatchService` (`logs_client_factory` / `metrics_client_factory`) and `NewRelicService` (`run_nrql_fn`). Unit tests pass a fake client into the constructor instead of monkeypatching module state. `DatabaseService` has no such seam: its only DB-hitting tests are integration tests against a real Postgres.
+Network/DB clients are **constructor-injected** on every service: `DatabaseService` (`engine_factory`, `catalog`), `CloudWatchLogsService` (`logs_client_factory`), `CloudWatchMetricsService` (`metrics_client_factory`) and `NewRelicService` (`run_nrql_fn`), typed by the Protocols in `service/ports.py`. Unit tests pass a fake into the constructor instead of monkeypatching module state. Source-agnostic helpers (`clamp_window`, `fit_rows_to_budget`) live in `core/time_window.py` and `core/limits.py`.
 
 ### 3.3 Composition Root and Registration
 
-`src/opsinsight/core/container.py` is the composition root — the one place that constructs services and wires their dependencies. `Container` lazily builds and caches (singleton-scoped, per container instance) `database_service` / `cloudwatch_service` / `newrelic_service`. Tools call `get_container().database_service.list_tables(...)`. Tests that want an isolated object graph construct their own `Container`; `reset_container()` drops the process-wide singleton so the next `get_container()` rebuilds against current `Settings`.
+`src/opsinsight/core/container.py` is the composition root — the one place that constructs services and wires their dependencies. `Container` lazily builds and caches (singleton-scoped, per container instance) `database_service` / `cloudwatch_logs_service` / `cloudwatch_metrics_service` / `newrelic_service` / `trace_service`. Tools call `get_container().database_service.list_tables(...)`. Tests that want an isolated object graph construct their own `Container`; `reset_container()` drops the process-wide singleton so the next `get_container()` rebuilds against current `Settings`.
 
 `src/opsinsight/core/app.py` holds the single shared `mcp = FastMCP("investigation-server")` instance. It lives in its own module so `server.py` (the entry point run via `investigation-server` / `-m`) never gets circularly imported.
 
@@ -171,7 +171,7 @@ There is **no application-level table allowlist**. Any table the dedicated read-
 
 | Tool | Arguments | Returns | Notes |
 |---|---|---|---|
-| `trace_request` | `value`, `start?`, `end?`, `sources?`, `cw_log_groups?`, `cw_field?`, `nr_event_type?`, `nr_field?`, `db_id_type?`, `limit: int = 200` | one merged timeline (oldest first, each event tagged `source`/`origin`/`in_window`), `undated` DB rows, per-source status + executed query | `TraceService` composes the three source services and runs them in parallel (`asyncio.gather`, CloudWatch in a thread), each under `TRACE_SOURCE_TIMEOUT_S`. Every query still goes through its source's guardrail/redaction. A failed/timed-out source is reported in `data.sources`; the call only fails when every searched source failed. One CloudWatch Insights query covers all log groups. DB rows are **not** window-filtered (`in_window` flags them); each matched table returns at most `limit` rows, newest first when it has a timestamp column. Capped at `TRACE_MAX_EVENTS` / `TRACE_MAX_RESPONSE_BYTES`, filled with in-window events first (earliest first), then undated rows, then out-of-window rows, so old DB rows can't push the window's logs out. A CloudWatch query still running when polling ends, or when the source times out, is stopped. `executed_query` is reported for failed and timed-out sources too, and for the DB (one statement per matched table). |
+| `trace_request` | `value`, `start?`, `end?`, `sources?`, `cw_log_groups?`, `cw_field?`, `nr_event_type?`, `nr_field?`, `db_id_type?`, `limit: int = 200` | one merged timeline (oldest first, each event tagged `source`/`origin`/`in_window`), `undated` DB rows, per-source status + executed query | `TraceService` runs the registered `TraceSource` adapters (`service/trace_sources.py`, one per source, each wrapping that source's service) in parallel (`asyncio.gather`, CloudWatch in a thread), each under `TRACE_SOURCE_TIMEOUT_S`. Every query still goes through its source's guardrail/redaction. A failed/timed-out source is reported in `data.sources`; the call only fails when every searched source failed. One CloudWatch Insights query covers all log groups. DB rows are **not** window-filtered (`in_window` flags them); each matched table returns at most `limit` rows, newest first when it has a timestamp column. Capped at `TRACE_MAX_EVENTS` / `TRACE_MAX_RESPONSE_BYTES`, filled with in-window events first (earliest first), then undated rows, then out-of-window rows, so old DB rows can't push the window's logs out. A CloudWatch query still running when polling ends, or when the source times out, is stopped. `executed_query` is reported for failed and timed-out sources too, and for the DB (one statement per matched table). |
 
 ### 4.4 Resources
 
@@ -471,7 +471,7 @@ src/opsinsight/
     logging_config.py
     cache.py                # TTL cache for schema/catalog lookups
   tools/{database,cloudwatch,newrelic}/   # one file per @mcp.tool()
-  service/                  # DatabaseService, CloudWatchService, NewRelicService
+  service/                  # one service per source + TraceService, ports.py, trace_sources.py
   integrations/
     database/{engine,guardrail,introspect}.py
     cloudwatch/{client,guardrail}.py

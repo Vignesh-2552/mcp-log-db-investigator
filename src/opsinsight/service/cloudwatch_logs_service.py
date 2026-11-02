@@ -3,7 +3,6 @@ import json
 import threading
 import time
 from collections import defaultdict
-from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -14,10 +13,7 @@ from opsinsight.core.errors import ToolError
 from opsinsight.core.field_heuristics import CORRELATION_ID_RE as _CORRELATION_ID_RE
 from opsinsight.core.logging_config import get_logger
 from opsinsight.core.redaction import redact_log_event, redact_row
-from opsinsight.integrations.cloudwatch.client import (
-    get_logs_client,
-    get_metrics_client,
-)
+from opsinsight.integrations.cloudwatch.client import get_logs_client
 from opsinsight.integrations.cloudwatch.constants import (
     BYTES_SCANNED_SAFETY_MARGIN,
     FILTER_EVENTS_CAP,
@@ -39,7 +35,6 @@ from opsinsight.integrations.cloudwatch.models import (
     LogFieldShape,
     LogFieldsResult,
     LogGroupSummary,
-    MetricStatsResult,
     QueryPollResult,
     SampleComposition,
 )
@@ -48,37 +43,31 @@ from opsinsight.integrations.cloudwatch.queries import (
     build_trace_query,
 )
 from opsinsight.service.base import BaseService
+from opsinsight.service.cloudwatch_common import aws_error_response
+from opsinsight.service.ports import LogsClient, LogsClientFactory
 
-logger = get_logger("cloudwatch.service")
+logger = get_logger("cloudwatch.logs_service")
 
 
-class CloudWatchService(BaseService):
-    """Business logic for every CloudWatch-backed tool. Log/metric client
-    construction is constructor-injected (defaulting to the real boto3
-    client factories) so tests can substitute a fake client via the
-    constructor instead of monkeypatching module globals — dependency
-    inversion instead of patching."""
+class CloudWatchLogsService(BaseService):
+    """Business logic for every CloudWatch Logs tool (log groups, field
+    discovery, Insights queries, trace lookups, filter patterns). The Logs
+    client factory is constructor-injected (defaulting to the real boto3
+    factory) so tests can pass a fake client instead of monkeypatching.
+    Metrics live in `CloudWatchMetricsService`."""
 
     def __init__(
         self,
         settings: Settings,
-        logs_client_factory: Callable[[Settings], Any] = get_logs_client,
-        metrics_client_factory: Callable[[Settings], Any] = get_metrics_client,
+        logs_client_factory: LogsClientFactory = get_logs_client,
     ) -> None:
         super().__init__(settings)
         self._logs_client_factory = logs_client_factory
-        self._metrics_client_factory = metrics_client_factory
 
-    def _logs_client(self) -> Any:
+    def _logs_client(self) -> LogsClient:
         return self._logs_client_factory(self.settings)
 
-    def _metrics_client(self) -> Any:
-        return self._metrics_client_factory(self.settings)
-
-    @staticmethod
-    def _aws_error_response(e: Exception) -> dict:
-        logger.error("AWS CloudWatch API error: %s", e)
-        return ToolError(rule="aws_error", message="AWS CloudWatch call failed.", detail=str(e)).to_response()
+    _aws_error_response = staticmethod(aws_error_response)
 
     @staticmethod
     def _epoch_seconds(dt: datetime) -> int:
@@ -386,7 +375,7 @@ class CloudWatchService(BaseService):
         )
 
     @staticmethod
-    def _stop_query(client: Any, query_id: str | None) -> None:
+    def _stop_query(client: LogsClient, query_id: str | None) -> None:
         """Best effort: the query may already have finished."""
         if not query_id:
             return
@@ -462,38 +451,3 @@ class CloudWatchService(BaseService):
         ]
         result = FilterEventsResult(log_group=log_group, events=events, event_count=len(events))
         return self.ok(result.to_dict(), {"row_count": len(events)})
-
-    def get_metric_stats(
-        self,
-        namespace: str,
-        metric: str,
-        dimensions: dict[str, str],
-        period: int,
-        start: str,
-        end: str,
-    ) -> dict:
-        settings = self.settings
-        try:
-            start_dt, end_dt = clamp_window(
-                start, end, settings.cw_default_window_hours, settings.cw_max_window_hours
-            )
-            client = self._metrics_client()
-            response = client.get_metric_statistics(
-                Namespace=namespace,
-                MetricName=metric,
-                Dimensions=[{"Name": k, "Value": v} for k, v in dimensions.items()],
-                StartTime=start_dt,
-                EndTime=end_dt,
-                Period=period,
-                Statistics=["Average", "Sum", "Minimum", "Maximum", "SampleCount"],
-            )
-        except ToolError as e:
-            return e.to_response()
-        except (BotoCoreError, ClientError) as e:
-            return self._aws_error_response(e)
-
-        datapoints = sorted(response.get("Datapoints", []), key=lambda dp: dp["Timestamp"])
-        for dp in datapoints:
-            dp["Timestamp"] = dp["Timestamp"].isoformat()
-        result = MetricStatsResult(namespace=namespace, metric=metric, datapoints=datapoints)
-        return self.ok(result.to_dict(), {"row_count": len(datapoints)})
