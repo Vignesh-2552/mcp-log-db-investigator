@@ -6,6 +6,27 @@ to PyPI only once, so every release gets a new number.
 
 ## [Unreleased]
 
+### Changed
+Internal refactor; no tool names, parameters or response shapes changed.
+- `trace_request` now runs pluggable `TraceSource` adapters (`service/trace_sources.py`)
+  instead of branching on source names inside `TraceService`. Adding a source no
+  longer means editing `TraceService`.
+- `CloudWatchService` is split into `CloudWatchLogsService` and `CloudWatchMetricsService`.
+- `DatabaseService` takes an injectable `engine_factory` and `catalog`, like the
+  other services. Injected clients are typed by Protocols in `service/ports.py`.
+- Shared helpers moved to `core/`: `clamp_window` → `core/time_window.py`,
+  `fit_rows_to_budget` / `truncate_cell` / `truncate_row_cells` → `core/limits.py`.
+
+- Tests moved from `tests/` to sit beside the module they test (`foo.py` →
+  `foo_test.py`). Test files are excluded from the wheel, Docker image and coverage.
+  Run them with `uv run pytest -m "not integration"`.
+
+### Removed
+- Unused `get_connection()` from `integrations/database/engine.py`.
+
+### Docs
+- Added `AGENTS.md` (rules for AI coding agents) and `docs/code-structure.md`.
+
 ## [0.2.0] - 2026-10-28
 
 ### Security

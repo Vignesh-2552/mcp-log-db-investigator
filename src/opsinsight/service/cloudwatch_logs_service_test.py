@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from opsinsight.core.config import get_settings
-from opsinsight.service.cloudwatch_service import CloudWatchService
+from opsinsight.service.cloudwatch_logs_service import CloudWatchLogsService
 
 LOG_GROUP = "/aws/ecs/test-svc"
 
@@ -37,8 +37,8 @@ def _event(event_id: str, obj: dict) -> dict:
     return {"eventId": event_id, "message": json.dumps(obj)}
 
 
-def _service_with_logs_client(fake_client) -> CloudWatchService:
-    return CloudWatchService(get_settings(), logs_client_factory=lambda settings: fake_client)
+def _service_with_logs_client(fake_client) -> CloudWatchLogsService:
+    return CloudWatchLogsService(get_settings(), logs_client_factory=lambda settings: fake_client)
 
 
 def test_describe_log_fields_clusters_by_shape():
@@ -166,18 +166,18 @@ def test_run_insights_query_ceiling_exceeded_suggests_window(monkeypatch: pytest
 def test_suggest_window_seconds_formula(bytes_scanned, ceiling, window_seconds, expected_max):
     start = datetime.now(UTC)
     end = start + timedelta(seconds=window_seconds)
-    suggestion = CloudWatchService._suggest_window_seconds(bytes_scanned, ceiling, start, end)
+    suggestion = CloudWatchLogsService._suggest_window_seconds(bytes_scanned, ceiling, start, end)
     assert suggestion == expected_max
 
 
 def test_suggest_window_seconds_returns_none_for_degenerate_input():
     now = datetime.now(UTC)
-    assert CloudWatchService._suggest_window_seconds(0, 5000, now, now + timedelta(hours=1)) is None
-    assert CloudWatchService._suggest_window_seconds(100, 5000, now, now) is None
+    assert CloudWatchLogsService._suggest_window_seconds(0, 5000, now, now + timedelta(hours=1)) is None
+    assert CloudWatchLogsService._suggest_window_seconds(100, 5000, now, now) is None
 
 
 def test_get_trace_events_rejects_invalid_field():
-    service = CloudWatchService(get_settings())
+    service = CloudWatchLogsService(get_settings())
     start, end = _window()
     result = service.get_trace_events(LOG_GROUP, "bad field!", "x", start, end)
     assert result["ok"] is False
@@ -185,7 +185,7 @@ def test_get_trace_events_rejects_invalid_field():
 
 
 def test_get_trace_events_rejects_newline_in_value():
-    service = CloudWatchService(get_settings())
+    service = CloudWatchLogsService(get_settings())
     start, end = _window()
     result = service.get_trace_events(LOG_GROUP, "trace_id", "line1\nline2", start, end)
     assert result["ok"] is False
@@ -272,7 +272,7 @@ def test_list_log_groups_with_no_allowlist_enumerates_nothing(monkeypatch: pytes
     def _factory(settings):
         raise AssertionError("must not call AWS when no log group is allowed")
 
-    result = CloudWatchService(get_settings(), logs_client_factory=_factory).list_log_groups()
+    result = CloudWatchLogsService(get_settings(), logs_client_factory=_factory).list_log_groups()
 
     assert result["ok"] is True
     assert result["data"]["log_groups"] == []

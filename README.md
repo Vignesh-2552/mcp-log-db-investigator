@@ -363,14 +363,16 @@ tool call and resource read is written as a structured audit event to the
 
 ```powershell
 uv run ruff check .                              # lint
-uv run pytest tests/unit -q                      # guardrail/redaction tests, no external deps
-uv run pytest tests/integration -m integration   # requires a reachable Postgres; auto-skips otherwise
+uv run pytest -m "not integration" -q          # unit tests, no external deps
+uv run pytest -m integration                     # requires a reachable Postgres; auto-skips otherwise
 ```
 
-- `tests/unit/` — pure logic, no network/DB dependency (the guardrail tests
-  are the security-boundary tests and the highest priority in this suite).
-- `tests/integration/test_db_tools.py` — runs against your configured
-  Postgres; skipped automatically if it isn't reachable.
+Each test file sits next to the module it tests (`guardrail.py` → `guardrail_test.py`).
+
+- Unit tests — pure logic, no network/DB dependency (the `guardrail_test.py`
+  files are the security-boundary tests and the highest priority in this suite).
+- `src/opsinsight/service/database_service_integration_test.py` — runs against
+  your configured Postgres; skipped automatically if it isn't reachable.
 
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs lint + both
 test suites on every push/PR to `main`/`dev`.

@@ -1,7 +1,7 @@
 """DatabaseService without a real Postgres: introspection helpers and the
 engine are replaced with fakes, so these cover the service's own logic
 (error translation, redaction, capping, response shape). Real-database
-behaviour is covered by tests/integration."""
+behaviour is covered by database_service_integration_test.py."""
 
 from contextlib import asynccontextmanager
 
@@ -11,7 +11,6 @@ from sqlalchemy.exc import OperationalError
 from opsinsight.core.config import Settings
 from opsinsight.integrations.database import introspect
 from opsinsight.integrations.database.models import SampleRowsResult
-from opsinsight.service import database_service as db_module
 from opsinsight.service.database_service import DatabaseService
 
 
@@ -52,21 +51,21 @@ def _db_error(message: str) -> OperationalError:
     return OperationalError("SELECT ...", {}, Exception(message))
 
 
-def _service(**overrides) -> DatabaseService:
-    return DatabaseService(Settings(**overrides))
+def _service(engine: "_FakeEngine | None" = None, **overrides) -> DatabaseService:
+    if engine is None:
+        return DatabaseService(Settings(**overrides))
+    return DatabaseService(Settings(**overrides), engine_factory=lambda settings: engine)
 
 
 @pytest.fixture
-def engine(monkeypatch: pytest.MonkeyPatch):
-    fake = _FakeEngine()
-    monkeypatch.setattr(db_module, "get_engine", lambda settings: fake)
-    return fake
+def engine():
+    return _FakeEngine()
 
 
 async def test_run_query_returns_redacted_rows_and_executed_sql(engine):
     engine.result = _Result(["id", "email"], [(1, "jane@example.com")])
 
-    result = await _service().run_query("SELECT id, email FROM public.users", limit=10)
+    result = await _service(engine).run_query("SELECT id, email FROM public.users", limit=10)
 
     assert result["ok"] is True
     data = result["data"]
@@ -80,7 +79,7 @@ async def test_run_query_returns_redacted_rows_and_executed_sql(engine):
 async def test_run_query_truncates_to_response_budget(engine):
     engine.result = _Result(["note"], [("x" * 200,) for _ in range(50)])
 
-    result = await _service(db_max_response_bytes=1000).run_query("SELECT note FROM public.t")
+    result = await _service(engine, db_max_response_bytes=1000).run_query("SELECT note FROM public.t")
 
     assert result["ok"] is True
     assert 0 < result["meta"]["row_count"] < 50
@@ -89,7 +88,7 @@ async def test_run_query_truncates_to_response_budget(engine):
 
 
 async def test_run_query_rejects_writes_before_touching_the_db(engine):
-    result = await _service().run_query("DELETE FROM public.users")
+    result = await _service(engine).run_query("DELETE FROM public.users")
 
     assert result["ok"] is False
     assert engine.executed == []
@@ -98,7 +97,7 @@ async def test_run_query_rejects_writes_before_touching_the_db(engine):
 async def test_statement_timeout_is_reported_as_query_timeout(engine):
     engine.exc = _db_error("canceling statement due to statement timeout")
 
-    result = await _service().run_query("SELECT 1")
+    result = await _service(engine).run_query("SELECT 1")
 
     assert result["error"]["rule"] == "query_timeout"
     assert "db_explain_query" in result["error"]["detail"]
@@ -107,7 +106,7 @@ async def test_statement_timeout_is_reported_as_query_timeout(engine):
 async def test_other_db_errors_are_reported_with_driver_detail(engine):
     engine.exc = _db_error('relation "nope" does not exist')
 
-    result = await _service().run_query("SELECT * FROM nope")
+    result = await _service(engine).run_query("SELECT * FROM nope")
 
     assert result["error"]["rule"] == "query_execution_error"
     assert 'relation "nope" does not exist' in result["error"]["detail"]
@@ -116,7 +115,7 @@ async def test_other_db_errors_are_reported_with_driver_detail(engine):
 async def test_explain_query_returns_plan(engine):
     engine.result = _Result([], [], scalar=[{"Plan": {"Node Type": "Seq Scan"}}])
 
-    result = await _service().explain_query("SELECT * FROM public.orders")
+    result = await _service(engine).explain_query("SELECT * FROM public.orders")
 
     assert result["ok"] is True
     assert result["data"]["plan"] == [{"Plan": {"Node Type": "Seq Scan"}}]
@@ -125,12 +124,12 @@ async def test_explain_query_returns_plan(engine):
 
 async def test_explain_query_reports_db_errors(engine):
     engine.exc = _db_error("boom")
-    result = await _service().explain_query("SELECT 1")
+    result = await _service(engine).explain_query("SELECT 1")
     assert result["error"]["rule"] == "query_execution_error"
 
 
 async def test_explain_query_rejects_non_select(engine):
-    result = await _service().explain_query("DROP TABLE x")
+    result = await _service(engine).explain_query("DROP TABLE x")
     assert result["ok"] is False
     assert engine.executed == []
 
@@ -233,3 +232,16 @@ async def test_introspection_tool_errors_pass_through(monkeypatch: pytest.Monkey
     monkeypatch.setattr(introspect, "describe_table", raises_tool_error)
     result = await _service().describe_table("nope")
     assert result["error"]["rule"] == "table_not_found"
+
+
+async def test_catalog_is_constructor_injected():
+    class _FakeCatalog:
+        async def list_tables(self, schema, settings=None):
+            from opsinsight.integrations.database.models import TableSummary
+
+            return [TableSummary(table="public.orders", row_estimate=3, comment=None)]
+
+    service = DatabaseService(Settings(), catalog=_FakeCatalog())
+    result = await service.list_tables("public")
+    assert result["ok"] is True
+    assert result["data"]["tables"][0]["table"] == "public.orders"

@@ -19,15 +19,16 @@ copy .env.example .env
 You don't need every backend configured to contribute — Postgres, CloudWatch,
 and New Relic are independent (see the README's
 [What each source needs](README.md#what-each-source-needs)). Unit tests don't
-require any of them; only `tests/integration/` needs a reachable Postgres,
-and it auto-skips otherwise.
+require any of them; only the `integration`-marked tests need a reachable
+Postgres, and they auto-skip otherwise. Tests sit beside the module they test
+(`foo.py` → `foo_test.py`).
 
 ## Before opening a PR
 
 ```powershell
 uv run ruff check .                              # lint — must be clean
-uv run pytest tests/unit -q                      # must pass
-uv run pytest tests/integration -m integration   # if you touched DB code and have Postgres available
+uv run pytest -m "not integration" -q          # must pass
+uv run pytest -m integration                     # if you touched DB code and have Postgres available
 ```
 
 CI (`.github/workflows/ci.yml`) runs the same checks on every push/PR — a red

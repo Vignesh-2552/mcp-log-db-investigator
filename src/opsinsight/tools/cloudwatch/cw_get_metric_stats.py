@@ -13,6 +13,6 @@ def cw_get_metric_stats(
 ) -> dict:
     """Get metric datapoints (avg/sum/min/max/sample_count) for correlating error spikes
     with infra metrics like CPU/latency."""
-    return get_container().cloudwatch_service.get_metric_stats(
+    return get_container().cloudwatch_metrics_service.get_metric_stats(
         namespace, metric, dimensions, period, start, end
     )

@@ -17,6 +17,6 @@ def cw_get_trace_events(
     reconstruct a trace by hand. Discover `field` via
     cw_describe_log_fields's per-shape `correlation_id_candidates` hint.
     CloudWatch-only: does not fan out to the database or New Relic."""
-    return get_container().cloudwatch_service.get_trace_events(
+    return get_container().cloudwatch_logs_service.get_trace_events(
         log_group, field, value, start, end, limit, include_ptr
     )

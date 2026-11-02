@@ -1,10 +1,8 @@
 import pytest
 
 from opsinsight.core.errors import GuardrailError
-from opsinsight.integrations.database.guardrail import (
-    truncate_cell,
-    validate_sql,
-)
+from opsinsight.core.limits import truncate_cell
+from opsinsight.integrations.database.guardrail import validate_sql
 
 
 def test_valid_select_passes():

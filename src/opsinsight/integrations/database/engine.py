@@ -1,9 +1,6 @@
-from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
-
 from sqlalchemy import event
 from sqlalchemy.engine import make_url
-from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from opsinsight.core.config import Settings, get_settings
 from opsinsight.core.logging_config import get_logger
@@ -69,10 +66,3 @@ async def reset_engine() -> None:
     for engine in engines:
         logger.info("Disposing DB engine")
         await engine.dispose()
-
-
-@asynccontextmanager
-async def get_connection(settings: Settings | None = None) -> AsyncGenerator[AsyncConnection]:
-    engine = get_engine(settings)
-    async with engine.connect() as conn:
-        yield conn
