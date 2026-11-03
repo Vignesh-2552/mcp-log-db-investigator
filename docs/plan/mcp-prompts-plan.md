@@ -1,16 +1,16 @@
 # Implementation Plan: Interactive MCP Prompts (Native Slash Commands)
 
 **Date:** 2026-11-03  
-**Target Release:** `opsinsight-mcp` v0.4.0 (Phase 2: Guided Investigation)  
+**Target Release:** next `opsinsight-mcp` release (listed under Unreleased in `CHANGELOG.md`)  
 **Git Branch:** `feat/mcp-prompts`  
-**Status:** Planning / In Progress  
-**Document Location:** [`docs/plan/mcp-prompts-plan.md`](file:///d:/Vignesh/mcp_tool/docs/plan/mcp-prompts-plan.md)  
+**Status:** Implemented (pending review)  
+**Document Location:** [`docs/plan/mcp-prompts-plan.md`](mcp-prompts-plan.md)  
 
 ---
 
 ## 1. Executive Summary & Objective
 
-In the current version of `opsinsight-mcp`, the server exposes 17 read-only query tools and 3 resources. However, when an AI model (such as Claude Desktop or Cursor) is asked to investigate an issue, it must manually remember or be instructed how to sequence queries ("discover before you query"). Without the external Agensi skill installed, models frequently make zero-row queries or guess schema names.
+In the current version of `opsinsight-mcp`, the server exposes 17 read-only query tools and 4 resources (3 fixed URIs plus the `schema://db/table/{name}` template). However, when an AI model (such as Claude Desktop or Cursor) is asked to investigate an issue, it must manually remember or be instructed how to sequence queries ("discover before you query"). Without the external Agensi skill installed, models frequently make zero-row queries or guess schema names.
 
 **Interactive MCP Prompts** are native capabilities defined in the Model Context Protocol (MCP) and supported by FastMCP (`@mcp.prompt()`). They surface as interactive slash commands inside compatible AI clients (e.g., typing `/investigate_incident` in Claude Desktop).
 
@@ -23,7 +23,7 @@ In the current version of `opsinsight-mcp`, the server exposes 17 read-only quer
 
 ## 2. Prompts Specification
 
-Three native prompts will be implemented in accordance with [`docs/design.md`](file:///d:/Vignesh/mcp_tool/docs/design.md) §4.5 and [`docs/roadmap.md`](file:///d:/Vignesh/mcp_tool/docs/roadmap.md):
+Three native prompts will be implemented in accordance with [`docs/design.md`](../design.md) §4.5 (now documented in §4.6):
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
@@ -102,7 +102,7 @@ Three native prompts will be implemented in accordance with [`docs/design.md`](f
 
 ## 3. Architecture & Code Structure
 
-In accordance with [`docs/code-structure.md`](file:///d:/Vignesh/mcp_tool/docs/code-structure.md), prompt modules will be placed in a dedicated, clean package:
+In accordance with [`docs/code-structure.md`](../code-structure.md), prompt modules will be placed in a dedicated, clean package:
 
 ```
 src/opsinsight/
@@ -111,7 +111,9 @@ src/opsinsight/
 │   ├── investigate_incident.py     # Prompt definition: /investigate_incident
 │   ├── trace_user_journey.py       # Prompt definition: /trace_user_journey
 │   ├── slow_endpoint_rca.py        # Prompt definition: /slow_endpoint_rca
-│   └── prompts_test.py             # Unit tests for prompt rendering & parameter schema
+│   ├── common.py                   # Shared INVESTIGATION_RULES + quote_input()
+│   ├── common_test.py              # All prompts: registration, shared rules, tool-name drift
+│   └── <prompt>_test.py            # One test file per prompt (repo convention)
 ├── server.py                       # Imports `opsinsight.prompts` during server startup
 └── core/app.py                     # Single shared FastMCP instance (`mcp`)
 ```
@@ -120,7 +122,7 @@ src/opsinsight/
 ```python
 from opsinsight.core.app import mcp
 
-@mcp.prompt(name="investigate_incident", description="...")
+@mcp.prompt()  # name = function name, description = docstring
 def investigate_incident(ticket_text: str, time_window: str = "24h", store_or_domain: str | None = None) -> str:
     ...
 ```
@@ -130,37 +132,53 @@ def investigate_incident(ticket_text: str, time_window: str = "24h", store_or_do
 ## 4. Step-by-Step Task Breakdown
 
 ### Phase 1: Package Foundation & Infrastructure
-- [ ] Create directory [`src/opsinsight/prompts/`](file:///d:/Vignesh/mcp_tool/src/opsinsight/prompts/).
-- [ ] Create `__init__.py` registering prompt modules onto `mcp`.
-- [ ] Update [`src/opsinsight/server.py`](file:///d:/Vignesh/mcp_tool/src/opsinsight/server.py) to import `opsinsight.prompts` along with tools and resources.
+- [x] Create directory [`src/opsinsight/prompts/`](../../src/opsinsight/prompts/).
+- [x] Create `__init__.py` registering prompt modules onto `mcp`.
+- [x] Update [`src/opsinsight/server.py`](../../src/opsinsight/server.py) to import `opsinsight.prompts` along with tools and resources.
 
 ### Phase 2: Prompt Implementations
-- [ ] Implement `src/opsinsight/prompts/investigate_incident.py`:
+- [x] Implement `src/opsinsight/prompts/investigate_incident.py`:
   - Build comprehensive system instruction template encoding discovery rules, safety caps, and cookbook references.
-- [ ] Implement `src/opsinsight/prompts/trace_user_journey.py`:
+- [x] Implement `src/opsinsight/prompts/trace_user_journey.py`:
   - Build journey-tracing template with `trace_request` guidance and timeline synthesis instructions.
-- [ ] Implement `src/opsinsight/prompts/slow_endpoint_rca.py`:
+- [x] Implement `src/opsinsight/prompts/slow_endpoint_rca.py`:
   - Build performance diagnostic template with APM percentiles, `db_explain_query` guidance, and metric checks.
 
 ### Phase 3: Unit Testing Suite
-- [ ] Create `src/opsinsight/prompts/prompts_test.py`:
+- [x] Create `src/opsinsight/prompts/prompts_test.py`:
   - Test that all 3 prompts are registered in `mcp`.
   - Test parameter validation (defaults and custom inputs).
   - Verify prompt content contains required tool references, guardrail guidance, and expected output formatting.
   - Ensure zero network or external dependencies during tests.
 
 ### Phase 4: Quality & Documentation Gate
-- [ ] Run `ruff check .` to verify clean code formatting.
-- [ ] Run `pytest -m "not integration"` to ensure all unit tests pass and code coverage remains $\ge 85\%$.
-- [ ] Update [`docs/tool-reference.md`](file:///d:/Vignesh/mcp_tool/docs/tool-reference.md) with a new section documenting the 3 MCP Prompts.
-- [ ] Update [`README.md`](file:///d:/Vignesh/mcp_tool/README.md) and [`CHANGELOG.md`](file:///d:/Vignesh/mcp_tool/CHANGELOG.md).
+- [x] Run `ruff check .` to verify clean code formatting.
+- [x] Run `pytest -m "not integration"` to ensure all unit tests pass and code coverage remains $\ge 85\%$.
+- [x] Update [`docs/tool-reference.md`](../tool-reference.md) with a new section documenting the 3 MCP Prompts.
+- [x] Update [`README.md`](../../README.md) and [`CHANGELOG.md`](../../CHANGELOG.md).
 
 ---
 
-## 5. Acceptance Criteria
+## 5. Decisions From Plan Review
 
-1. **Client Compatibility:** Claude Desktop, Cursor, and other MCP clients list `/investigate_incident`, `/trace_user_journey`, and `/slow_endpoint_rca` in their prompt autocomplete.
+The first draft was checked against the code before implementation. These gaps were fixed:
+
+| Gap in the draft | Resolution |
+|---|---|
+| Prompt fetches were not audited, though `ticket_text` carries PII | `AuditMiddleware.on_get_prompt` logs a `prompt_get` event with redacted, truncated arguments |
+| `time_window="24h"` doesn't fit tools that take ISO `start`/`end` | The window stays as text; the shared rules tell the model to convert it to ISO 8601 UTC. No clock at render time, so a prompt run later isn't stale |
+| `trace_request` only searches the DB when `db_id_type` is set, and doesn't window-filter DB rows | `trace_user_journey` / `investigate_incident` say so and map `id_type` to `db_id_type`; `in_window` must be checked |
+| Steps assumed data no tool provides (row change history, endpoint→SQL mapping, metric dimensions) | Prompts point to the audit-trail cookbook query and New Relic datastore spans, and tell the model to ask for metric dimensions |
+| No cookbook support for APM latency | Added NRQL `Transaction`/`Span` entries and an RDS metrics workflow; a test checks every NRQL entry passes the guardrail |
+| Ticket text could inject instructions | `quote_input` fences user input as data and breaks up backtick fences inside it |
+| One `prompts_test.py` broke the `foo.py` → `foo_test.py` rule | One test file per prompt plus `common_test.py`; `EXPECTED_PROMPTS` pinned in `core/audit_test.py` |
+| `docs/roadmap.md` link was broken; `file:///` links only worked on one machine | Links are relative; `code-structure.md` no longer lists `roadmap.md` |
+| Docs said prompts don't exist | `CLAUDE.md`, `AGENTS.md`, `design.md` (§2, §3, §4.5, new §4.6, §10), `code-structure.md` updated |
+
+## 6. Acceptance Criteria
+
+1. **Client Compatibility:** `list_prompts` returns the three prompts with the arguments above (automated). Manually: Claude Desktop lists them as slash commands; other clients' prompt support varies.
 2. **Pure & Fast:** Prompt generation is instant (pure string formatting) and performs no I/O at prompt-fetch time.
-3. **Safety & Guardrails:** Prompt instructions explicitly forbid AI models from attempting mutations or requesting unredacted PII.
+3. **Safety & Guardrails:** Prompt instructions tell the model not to attempt writes or recover masked PII. This is advice only: read-only access and redaction are enforced by the server.
 4. **CI Compliance:** Linting passes with 0 errors and test coverage exceeds 85%.
 

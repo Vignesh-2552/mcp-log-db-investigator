@@ -55,10 +55,12 @@ context to write a *correct* query, and to validate + execute whatever it
 writes safely. See [`docs/design.md`](docs/design.md) (§3.1) for the full
 rationale.
 
-Cross-source correlation — matching a `request_id`/`order_id` across the DB
-and both log sources — is currently done by the client model itself; there's
-no composite "investigate this ticket end-to-end" tool yet (see
-[`docs/design.md`](docs/design.md) §4.5 for what's not implemented).
+Cross-source correlation of one identifier is `trace_request`, which searches
+the DB and both log sources at once and returns a single timeline. For whole
+investigations, three **MCP prompts** show up as slash commands in clients that
+support them: `/investigate_incident` (support ticket → incident report),
+`/trace_user_journey` (one id across every source) and `/slow_endpoint_rca`
+(endpoint latency → bottleneck). See [`docs/tool-reference.md`](docs/tool-reference.md#mcp-prompts).
 
 ## Architecture
 

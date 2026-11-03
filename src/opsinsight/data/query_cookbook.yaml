@@ -216,3 +216,48 @@
   query: |
     SELECT count(*) FROM Log WHERE level = 'ERROR' FACET message SINCE 1 day ago LIMIT 20
   notes: Good for spotting one dominant failure mode versus many unrelated errors.
+
+- id: nrql-transaction-latency-breakdown
+  title: "NRQL: transaction latency percentiles and where the time goes"
+  kind: nrql
+  query: |
+    SELECT percentile(duration, 50, 95, 99), average(duration), average(databaseDuration), average(externalDuration), count(*) FROM Transaction WHERE name = 'WebTransaction/Expressjs/POST//orders' TIMESERIES 5 minutes SINCE 4 hours ago
+  notes: "`duration`, `databaseDuration` and `externalDuration` are in seconds. If `databaseDuration` is most of `duration`, look at datastore spans next; if `externalDuration` is, look at external spans. Use the exact transaction `name` (find it with the URI query below if you only have a path)."
+
+- id: nrql-transaction-name-for-uri
+  title: "NRQL: find the transaction name for a URL path"
+  kind: nrql
+  query: |
+    SELECT count(*) FROM Transaction WHERE request.uri LIKE '/api/checkout%' FACET name SINCE 4 hours ago LIMIT 20
+  notes: Transaction names are not URL paths (e.g. `WebTransaction/Expressjs/POST//orders`). Find the name here, then filter on it with `name = '...'`.
+
+- id: nrql-transaction-slow-share
+  title: "NRQL: share of requests over a latency threshold, and error rate"
+  kind: nrql
+  query: |
+    SELECT percentage(count(*), WHERE duration > 1) AS 'over_threshold_pct', percentage(count(*), WHERE error IS true) AS 'error_pct', count(*) FROM Transaction WHERE name = 'WebTransaction/Expressjs/POST//orders' TIMESERIES 5 minutes SINCE 4 hours ago
+  notes: The threshold is in seconds (`duration > 1` means over 1000 ms). Compare against a normal period (`COMPARE WITH 1 day ago`) before calling it a regression.
+
+- id: nrql-slow-datastore-statements
+  title: "NRQL: slowest database statements from datastore spans"
+  kind: nrql
+  query: |
+    SELECT average(duration), max(duration), count(*) FROM Span WHERE category = 'datastore' AND entity.name = 'checkout-svc' FACET db.statement SINCE 4 hours ago LIMIT 20
+  notes: "`db.statement` is only present when the agent records SQL; if the facet is empty, facet on `name` (e.g. `Datastore/statement/Postgres/orders/select`) instead. Run `db_explain_query` on a reproducible SELECT to check for sequential scans or missing indexes."
+
+- id: nrql-slow-external-calls
+  title: "NRQL: slowest external dependencies from HTTP spans"
+  kind: nrql
+  query: |
+    SELECT average(duration), max(duration), count(*) FROM Span WHERE category = 'http' AND entity.name = 'checkout-svc' FACET name SINCE 4 hours ago LIMIT 20
+  notes: Use when `externalDuration` dominates a transaction's latency, to find which downstream service is slow.
+
+- id: cw-rds-saturation-metrics
+  title: "CloudWatch metrics: RDS saturation during a latency spike"
+  kind: workflow
+  query: |
+    -- cw_get_metric_stats(namespace="AWS/RDS", metric="CPUUtilization",
+    --     dimensions={"DBInstanceIdentifier": "<ask the user>"}, period=300,
+    --     start="2026-10-28T12:00:00Z", end="2026-10-28T16:00:00Z")
+    -- Repeat with metric="DatabaseConnections" and metric="FreeableMemory".
+  notes: There is no tool to list metrics or dimensions, so ask the user for the exact `DBInstanceIdentifier` (or ECS cluster/service, Lambda function name) instead of guessing. Line the datapoints up with the latency timeseries.

@@ -125,8 +125,9 @@ risk in the PR description.
 
 ## Things that do not exist (do not assume them)
 
-`investigation_start`, and the MCP prompts `investigate_incident`, `trace_user_journey`,
-`slow_endpoint_rca` are **not implemented**. See `docs/design.md` §4.5 before building on them.
+`investigation_start` is **not implemented**. See `docs/design.md` §4.5 before building on it.
+(The MCP prompts `investigate_incident`, `trace_user_journey` and `slow_endpoint_rca` do exist,
+in `src/opsinsight/prompts/`.)
 
 ## Keep docs in sync
 

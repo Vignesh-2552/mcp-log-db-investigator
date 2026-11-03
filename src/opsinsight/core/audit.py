@@ -50,7 +50,7 @@ def _emit(event: dict[str, Any]) -> None:
 
 
 class AuditMiddleware(Middleware):
-    """One structured audit event per tool call and resource read: actor,
+    """One structured audit event per tool call, prompt fetch and resource read: actor,
     target, redacted arguments, outcome and duration. Emitted on every path,
     including guardrail rejections and exceptions.
 
@@ -80,6 +80,30 @@ class AuditMiddleware(Middleware):
                 event.update(outcome="rejected", rule=(content.get("error") or {}).get("rule"))
             else:
                 event.update(outcome="ok", row_count=(content.get("meta") or {}).get("row_count"))
+            return result
+        finally:
+            event["duration_ms"] = round((time.perf_counter() - started) * 1000, 2)
+            _emit(event)
+
+    async def on_get_prompt(self, context: MiddlewareContext, call_next):
+        # Prompt arguments carry raw ticket text, so they get the same
+        # redaction and truncation as tool arguments.
+        started = time.perf_counter()
+        event: dict[str, Any] = {
+            "event": "prompt_get",
+            "prompt": context.message.name,
+            "actor": _actor(),
+            "request_id": _request_id(context),
+            "arguments": _safe_args(context.message.arguments),
+            "timestamp": context.timestamp.isoformat(),
+        }
+        try:
+            result = await call_next(context)
+        except Exception as e:
+            event.update(outcome="exception", error_type=type(e).__name__)
+            raise
+        else:
+            event["outcome"] = "ok"
             return result
         finally:
             event["duration_ms"] = round((time.perf_counter() - started) * 1000, 2)
