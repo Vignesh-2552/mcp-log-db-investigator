@@ -101,7 +101,7 @@ uvx --version
 
 | Source | `args` value | When to use |
 |---|---|---|
-| PyPI release | `["opsinsight-mcp==0.2.0"]` | A stable, pinned version |
+| PyPI release | `["opsinsight-mcp==0.3.1"]` | A stable, pinned version |
 | GitHub `main` | `["--from", "git+https://github.com/Vignesh-2552/mcp-log-db-investigator", "opsinsight-mcp"]` | The newest merged code |
 | A branch or tag | `["--from", "git+https://github.com/Vignesh-2552/mcp-log-db-investigator@<branch-or-tag>", "opsinsight-mcp"]` | Testing unreleased work |
 
@@ -113,7 +113,7 @@ on non-loopback hosts.
 To check that the package installs (this downloads it and exits, without starting the server):
 
 ```powershell
-uvx --from opsinsight-mcp==0.2.0 python -c "import importlib.metadata as m; print(m.version('opsinsight-mcp'))"
+uvx --from opsinsight-mcp==0.3.1 python -c "import importlib.metadata as m; print(m.version('opsinsight-mcp'))"
 ```
 
 #### Step 3: Get credentials for the sources you use
@@ -138,7 +138,7 @@ Leave out the variables for sources you don't use.
   "mcpServers": {
     "investigation": {
       "command": "uvx",
-      "args": ["opsinsight-mcp==0.2.0"],
+      "args": ["opsinsight-mcp==0.3.1"],
       "env": {
         "DB_URL": "postgresql+asyncpg://readonly_user:pass@host:5432/dbname",
         "CLOUDWATCH_REGION": "ap-south-1",
@@ -157,7 +157,7 @@ Leave out the variables for sources you don't use.
 `--scope user` to make it available in every project:
 
 ```powershell
-claude mcp add investigation --scope user -e DB_URL=postgresql+asyncpg://readonly_user:pass@host:5432/dbname -- uvx opsinsight-mcp==0.2.0
+claude mcp add investigation --scope user -e DB_URL=postgresql+asyncpg://readonly_user:pass@host:5432/dbname -- uvx opsinsight-mcp==0.3.1
 ```
 
 Any tuning variable from `.env.example` can also go in `env`, for example
@@ -184,7 +184,7 @@ To run one shared HTTP server instead of a stdio process per client, use the
 because settings load from `.env` in the current directory:
 
 ```powershell
-uvx --from opsinsight-mcp==0.2.0 investigation-server
+uvx --from opsinsight-mcp==0.3.1 investigation-server
 ```
 
 The same HTTP rules apply as when [running from source](#installation): it serves
@@ -252,7 +252,7 @@ uv run investigation-server doctor
 Example output:
 
 ```text
-opsinsight-mcp doctor (v0.2.0)
+opsinsight-mcp doctor (v0.3.1)
 ================================================================================
 Service                Status    Latency    Details
 --------------------------------------------------------------------------------
