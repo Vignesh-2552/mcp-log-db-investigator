@@ -40,7 +40,7 @@ The server is connected to **Cursor** and/or **Claude Desktop**, so the engineer
 | Multi-tenant / customer-facing access | Internal engineering tool only |
 | Log ingestion or retention management | Owned by the platform team |
 | Server-side cross-source correlation | Client model fans out to each source and merges results (see §4.5) |
-| MCP prompts / composite investigation tools | Not implemented; see §10 |
+| Composite investigation tools (`investigation_start`) | Not implemented; see §4.5. MCP prompts give guided workflows instead (§4.6) |
 
 ## 3. High-Level Architecture
 
@@ -54,10 +54,10 @@ The server is connected to **Cursor** and/or **Claude Desktop**, so the engineer
 │              FastMCP Investigation Server                            │
 │                                                                      │
 │  ┌────────────┐  ┌──────────────┐  ┌──────────────────────────────┐  │
-│  │  Tools     │  │  Resources   │  │  Prompts                     │  │
-│  │  (thin     │  │  schema://   │  │  (not implemented — see §10) │  │
-│  │   wrappers)│  │  logs://     │  │                              │  │
-│  │            │  │  docs://     │  │                              │  │
+│  │  Tools     │  │  Resources   │  │  Prompts (prompts/)          │  │
+│  │  (thin     │  │  schema://   │  │  investigate_incident        │  │
+│  │   wrappers)│  │  logs://     │  │  trace_user_journey          │  │
+│  │            │  │  docs://     │  │  slow_endpoint_rca           │  │
 │  └─────┬──────┘  └──────┬───────┘  └──────────────────────────────┘  │
 │        │                │                                            │
 │  ┌─────▼────────────────▼────────────────────────────────────────┐   │
@@ -191,9 +191,39 @@ These appeared in the 0.1 draft and are **not** in the codebase. Do not assume t
 | Item | Original intent | Current substitute |
 |---|---|---|
 | `investigation_start` | Ticket id + description + time window → structured investigation plan | The client model plans from the conversation + cookbook |
-| MCP prompts `investigate_incident` / `trace_user_journey` / `slow_endpoint_rca` | Reusable workflows exposed to the client | None |
+
+MCP prompts were on this list; they are now implemented (§4.6).
 
 Cross-source correlation for a single identifier is handled by `trace_request` (§4.3a). Anything broader (e.g. correlating error spikes with metrics) is still done by the client model across the per-source tools.
+
+### 4.6 MCP Prompts
+
+Three prompts (`src/opsinsight/prompts/`, one file each) give the client a guided workflow,
+shown as slash commands in clients that support MCP prompts. Each returns one user message:
+the shared rules in `prompts/common.py` (discover before querying, read the cookbook, ISO 8601
+UTC windows, recover from `error.rule`/`error.detail`, read-only, PII stays masked, cost) plus
+the workflow steps.
+
+| Prompt | Arguments | Workflow |
+|---|---|---|
+| `investigate_incident` | `ticket_text`, `time_window` = `"24h"`, `store_or_domain` | Extract ids → `db_resolve_store` / `db_search_by_identifier` → DB state → `trace_request` (with `db_id_type`) → error patterns and metrics → structured incident report |
+| `trace_user_journey` | `identifier`, `id_type` = `"auto"`, `time_window` = `"24h"` | `trace_request` → fix empty sources with the describe tools → timeline (DB rows checked via `in_window`) → anomalies → journey table |
+| `slow_endpoint_rca` | `endpoint_or_transaction`, `time_window` = `"4h"`, `threshold_ms` = `1000` | NRQL `Transaction` percentiles and DB/external breakdown → datastore spans + `db_explain_query` → `cw_get_metric_stats` with user-supplied dimensions → remedies |
+
+Design choices:
+
+- **Pure.** No I/O, settings or clock at render time. The time window stays as text and the
+  client model converts it to ISO start/end when it runs the tools, so a prompt rendered now and
+  run later doesn't carry a stale timestamp.
+- **User input is quoted as data** (`quote_input`), so instructions inside a ticket aren't read
+  as part of the workflow.
+- **Prompts are advice, not a control.** Read-only access, redaction and query limits are
+  enforced by the server whatever the prompt says.
+- **Prompts don't guess what tools can't provide**: they tell the model that `trace_request`
+  skips the DB without `db_id_type`, that DB rows are current state rather than history, and to
+  ask the user for metric dimensions.
+- **Audited** via `AuditMiddleware.on_get_prompt` with redacted arguments. `prompts/common_test.py`
+  fails if a prompt names a tool that isn't registered.
 
 ## 5. Investigation Flow (Sequence)
 
@@ -416,14 +446,15 @@ Weekly review of tool usage and guardrail rejections to improve the cookbook rem
 | Phase | Scope | Status |
 |---|---|---|
 | **1** | DB tools + sqlglot guardrails + session hardening | **Done** |
-| **2** | CloudWatch tools + query cookbook + PII redaction | **Done** (no MCP prompts) |
+| **2** | CloudWatch tools + query cookbook + PII redaction | **Done** |
 | **2b** | New Relic tools + NRQL guardrail | **Done** |
 | **2c** | Service layer + `Container` composition root | **Done** |
 | **3** | Convenience tools `cw_get_trace_events`, `db_resolve_store`, catalog-driven `db_search_by_identifier` | **Done** (CloudWatch-only trace; not the original cross-source `trace_request`) |
 | **4** | Streamable HTTP transport | **Done** (no OAuth/bearer; bind is open HTTP) |
 | **4b** | stdio transport, PyPI package `opsinsight-mcp` (uvx), GHCR image, tag-triggered publishing | **Done** (0.1.0) |
 | **5a** | Cross-source `trace_request` (CloudWatch + New Relic + DB merged timeline) | **Done** |
-| **5** | `investigation_start`, MCP prompts, shared-deployment auth, dashboards | **Not started** |
+| **5b** | MCP prompts `investigate_incident`, `trace_user_journey`, `slow_endpoint_rca` (§4.6) | **Done** |
+| **5** | `investigation_start`, shared-deployment auth, dashboards | **Not started** |
 
 ## 11. Risks
 

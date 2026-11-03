@@ -21,8 +21,17 @@ parallel with a per-source timeout, and merges hits into one timeline; one sourc
 reported in `data.sources` rather than failing the call. `TraceService` has no source-specific
 code: adding a source to `trace_request` means writing one adapter and registering it in
 `default_trace_sources()`. Anything broader is still merged by
-the client model. `investigation_start` and MCP prompts (`investigate_incident` /
-`trace_user_journey` / `slow_endpoint_rca`) are **not implemented**; don't assume they exist.
+the client model. `investigation_start` is **not implemented**; don't assume it exists.
+
+**MCP prompts** live in `prompts/` (one file per prompt: `investigate_incident`,
+`trace_user_journey`, `slow_endpoint_rca`), registered with `@mcp.prompt()` and imported by
+`server.py` like tools and resources. They are pure string formatting (no I/O, no settings, no
+clock): each returns workflow instructions built from `prompts/common.py`'s shared
+`INVESTIGATION_RULES`, with user input wrapped by `quote_input` so ticket text reads as data.
+A prompt's time window is passed through as text; the client model converts it to ISO start/end.
+`prompts/common_test.py` fails if a prompt names a tool that isn't registered, and
+`core/audit_test.py` pins `EXPECTED_PROMPTS`. `AuditMiddleware.on_get_prompt` audits each fetch
+with redacted arguments.
 
 ## Commands
 
@@ -194,7 +203,7 @@ ago` when absent; unparseable `SINCE` forms are rejected (`unsupported_time_rang
 `server.run()` for the HTTP transport: `MCP_AUTH_TOKEN` bearer auth (fail closed on a non-loopback
 `SERVER_HOST` without it) and always-strict Host/Origin checks. **Audit**: `core/audit.py`'s
 `AuditMiddleware` (registered on the shared `mcp` in `core/app.py`) logs one JSON event per tool
-call/resource read. `src/opsinsight/core/audit_test.py` pins the registered tool inventory — adding a tool
+call/prompt fetch/resource read. `src/opsinsight/core/audit_test.py` pins the registered tool inventory — adding a tool
 means updating that set after reviewing it for authorization, redaction and audit.
 
 **DB safety is defense-in-depth**: `sqlglot`-based AST validation (single `SELECT`/`WITH...SELECT`/

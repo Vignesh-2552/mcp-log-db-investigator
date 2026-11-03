@@ -7,6 +7,13 @@ to PyPI only once, so every release gets a new number.
 ## [Unreleased]
 
 ### Added
+- MCP prompts `investigate_incident`, `trace_user_journey` and `slow_endpoint_rca`
+  (`src/opsinsight/prompts/`): guided investigation workflows that clients show as
+  slash commands. They do no I/O, quote user input as data, and name only registered
+  tools (enforced by a test). Prompt fetches are audited with redacted arguments.
+- Query cookbook entries for New Relic `Transaction` latency (percentiles, DB vs
+  external time, share over a threshold), slow datastore and external spans, and RDS
+  saturation metrics. A test now checks every NRQL cookbook entry passes the guardrail.
 - `opsinsight-mcp doctor` / `investigation-server doctor` command for pre-flight
   diagnostics without booting the server. Validates PostgreSQL connectivity &
   read-only status, AWS CloudWatch credentials & allowlisted log groups, New

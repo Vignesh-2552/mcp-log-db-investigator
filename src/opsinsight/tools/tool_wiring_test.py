@@ -139,6 +139,23 @@ def test_cookbook_entries_have_required_fields():
         assert entry["query"].strip()
 
 
+def test_cookbook_nrql_entries_pass_the_guardrail():
+    # A cookbook query the server would reject teaches the model a bad pattern.
+    import yaml
+
+    from opsinsight.integrations.newrelic.guardrail import (
+        enforce_nrql_window,
+        validate_nrql,
+    )
+    from opsinsight.resources.cookbook import _COOKBOOK_PATH
+
+    entries = yaml.safe_load(_COOKBOOK_PATH.read_text(encoding="utf-8"))
+    nrql = [e for e in entries if e["kind"] == "nrql"]
+    assert nrql
+    for entry in nrql:
+        enforce_nrql_window(validate_nrql(entry["query"], max_rows=100), default_hours=24, max_hours=168)
+
+
 async def test_log_groups_resource_reuses_the_list_tool(services):
     async with Client(mcp) as client:
         [content] = await client.read_resource("logs://groups")

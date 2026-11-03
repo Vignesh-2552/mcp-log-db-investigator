@@ -850,6 +850,27 @@ Resources are read-only context. They are not tools.
 | `logs://groups` | CloudWatch log group inventory. |
 | `docs://query-cookbook` | Markdown query cookbook generated from `src/opsinsight/data/query_cookbook.yaml`. |
 
+## MCP Prompts
+
+Prompts are guided workflows. Clients that support MCP prompts show them as slash commands
+(e.g. `/investigate_incident`); the client fills in the arguments and the server returns one
+message with step-by-step instructions that name the tools above. Prompts do no I/O and are
+advice only: the server's guardrails apply to every tool call they lead to.
+
+Time windows are text such as `"2h"`, `"24h"` or an ISO 8601 interval
+`"2026-10-28T12:00:00Z/2026-10-28T16:00:00Z"`. The client model converts them to ISO `start`/`end`.
+
+| Prompt | Arguments | Use it for |
+|---|---|---|
+| `investigate_incident` | `ticket_text` (required), `time_window` = `"24h"`, `store_or_domain` | A support ticket end to end: resolve ids, DB state, `trace_request`, error patterns, then a report with timeline, verified facts vs hypotheses, root cause and a customer reply draft. |
+| `trace_user_journey` | `identifier` (required), `id_type` = `"auto"`, `time_window` = `"24h"` | One order/user/request id across all sources, as a `Timestamp \| Source \| Service / table \| Action or state \| Status \| Details` table plus anomalies. `id_type` becomes `trace_request`'s `db_id_type`. |
+| `slow_endpoint_rca` | `endpoint_or_transaction` (required), `time_window` = `"4h"`, `threshold_ms` = `1000` | Latency for an HTTP path or New Relic transaction: percentiles, DB vs external time, slow statements (`db_explain_query`), RDS/ECS saturation, remedies. |
+
+To add a prompt: create `src/opsinsight/prompts/<name>.py` with `@mcp.prompt()`, include
+`INVESTIGATION_RULES`, wrap user input with `quote_input`, import it in
+`src/opsinsight/prompts/__init__.py`, and add it to `EXPECTED_PROMPTS` (`core/audit_test.py`) and
+`REQUIRED_ARGS` (`prompts/common_test.py`).
+
 ## How To Update A Tool
 
 Follow this flow when changing or adding a tool.
@@ -884,6 +905,7 @@ Tests sit beside the module they test (`foo.py` → `foo_test.py`). Paths are un
 | New Relic validation | `integrations/newrelic/guardrail_test.py` |
 | New Relic tool behavior | `service/newrelic_service_test.py` |
 | Redaction behavior | `core/redaction_test.py` |
+| MCP prompts | `prompts/<prompt>_test.py`, `prompts/common_test.py` |
 | Real Postgres behavior | `service/database_service_integration_test.py` |
 
 ## Quick Investigation Flow

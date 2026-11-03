@@ -4,6 +4,7 @@ import logging
 import pytest
 from fastmcp import Client
 
+from opsinsight import prompts as _prompts  # noqa: F401  (registers prompts)
 from opsinsight import resources as _resources  # noqa: F401  (registers resources)
 from opsinsight import tools as _tools  # noqa: F401  (registers tools)
 from opsinsight.core.app import mcp
@@ -32,6 +33,15 @@ EXPECTED_TOOLS = {
 }
 
 
+# Every prompt this server exposes. Prompts take raw ticket text, so a new one
+# must be checked for argument redaction in the audit log before being added.
+EXPECTED_PROMPTS = {
+    "investigate_incident",
+    "trace_user_journey",
+    "slow_endpoint_rca",
+}
+
+
 class _Collector(logging.Handler):
     def __init__(self) -> None:
         super().__init__()
@@ -56,6 +66,26 @@ async def test_registered_tools_match_the_reviewed_inventory():
     async with Client(mcp) as client:
         names = {tool.name for tool in await client.list_tools()}
     assert names == EXPECTED_TOOLS
+
+
+async def test_registered_prompts_match_the_reviewed_inventory():
+    async with Client(mcp) as client:
+        names = {prompt.name for prompt in await client.list_prompts()}
+    assert names == EXPECTED_PROMPTS
+
+
+async def test_prompt_fetch_is_audited_with_redacted_arguments(audit_events):
+    ticket = "Customer victim@example.com says checkout failed"
+    async with Client(mcp) as client:
+        await client.get_prompt("investigate_incident", {"ticket_text": ticket})
+
+    [event] = [e for e in audit_events if e["event"] == "prompt_get"]
+    assert event["prompt"] == "investigate_incident"
+    assert event["outcome"] == "ok"
+    assert event["actor"] == "unauthenticated"
+    assert "victim@example.com" not in json.dumps(event)
+    assert "[REDACTED_EMAIL]" in event["arguments"]["ticket_text"]
+    assert event["duration_ms"] >= 0
 
 
 async def test_rejected_tool_call_is_audited_with_redacted_arguments(audit_events):

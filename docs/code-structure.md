@@ -26,7 +26,7 @@ mcp_tool/
 │   ├── tool-reference.md  # Every tool: params, response, examples
 │   ├── code-structure.md  # This file
 │   ├── security-audit.md  # Security review notes
-│   ├── roadmap.md         # Planned work
+│   ├── plan/              # Implementation plans for in-progress features
 │   ├── agensi-skill/      # Packaged skill for client-side investigation
 │   └── assets/            # Logo and images
 ├── src/opsinsight/        # The package (see §2)
@@ -47,7 +47,7 @@ src/opsinsight/
 │   ├── config.py                # `Settings` (pydantic-settings) + cached get_settings()
 │   ├── errors.py                # ToolError + GuardrailError / CWGuardrailError / NewRelicGuardrailError
 │   ├── redaction.py             # PII masking by column name and regex
-│   ├── audit.py                 # AuditMiddleware: one JSON event per tool call / resource read
+│   ├── audit.py                 # AuditMiddleware: one JSON event per tool call / prompt fetch / resource read
 │   ├── rate_limit.py            # Global rate-limiting middleware
 │   ├── transport_security.py    # Bearer auth + Host/Origin checks (HTTP only)
 │   ├── time_window.py           # clamp_window / parse_iso8601 (shared by all time-bounded sources)
@@ -94,6 +94,11 @@ src/opsinsight/
 │       ├── client.py            # NerdGraph GraphQL client (httpx)
 │       ├── queries.py           # Fixed NRQL text
 │       ├── constants.py / models.py
+├── prompts/                     # @mcp.prompt() workflows — one file per prompt, pure text
+│   ├── common.py                # INVESTIGATION_RULES shared by all prompts + quote_input()
+│   ├── investigate_incident.py  # Support ticket → incident report
+│   ├── trace_user_journey.py    # One identifier → cross-source journey table
+│   └── slow_endpoint_rca.py     # Endpoint latency → bottleneck + remedies
 ├── resources/                   # @mcp.resource() modules
 │   ├── cookbook.py              # docs://query-cookbook
 │   ├── schema.py                # Schema resources
@@ -157,6 +162,9 @@ src/opsinsight/
 │   ├── cloudwatch_metrics_service_test.py
 │   ├── newrelic_service_test.py
 │   └── trace_service_test.py
+├── prompts/
+│   ├── common_test.py                # every prompt: registered, shared rules, names only real tools
+│   └── <prompt>_test.py              # one per prompt: rendered text for each argument case
 ├── resources/schema_test.py
 └── tools/tool_wiring_test.py         # every tool calls the right service method
 ```
@@ -174,6 +182,7 @@ Where a test goes:
 | Any module `x.py` | `x_test.py` next to it |
 | A guardrail | `integrations/<source>/guardrail_test.py` (allowed **and** rejected cases) |
 | A tool file / registration | `tools/tool_wiring_test.py`, `core/audit_test.py` (`EXPECTED_TOOLS`) |
+| A prompt | `prompts/<prompt>_test.py`, `prompts/common_test.py` (`REQUIRED_ARGS`), `core/audit_test.py` (`EXPECTED_PROMPTS`) |
 | DB behaviour needing real Postgres | `service/database_service_integration_test.py` |
 
 ## 5. Naming conventions
@@ -211,6 +220,7 @@ Update docs in the same PR as the code change:
 |---|---|
 | New / removed / renamed file or folder | This file (§1–§4) |
 | New tool | `docs/tool-reference.md`, `core/audit_test.py`, `README.md` tool list, `docs/design.md` §4 |
+| New / changed prompt | `docs/tool-reference.md` (MCP Prompts), `core/audit_test.py`, `docs/design.md` §4.6 |
 | New setting | `.env.example`, `docs/design.md` §7.2 |
 | New convention or layering rule | `AGENTS.md`, `CLAUDE.md`, this file §3/§5 |
 | Guardrail / security change | `docs/security-audit.md`, `docs/design.md` §6 |
