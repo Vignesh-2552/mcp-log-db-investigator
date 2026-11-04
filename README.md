@@ -174,7 +174,7 @@ The first launch takes a little longer while `uvx` downloads the package.
 
 #### Updating
 
-- **Pinned version:** change the version in `args`, e.g. `opsinsight-mcp==0.1.2`, then restart the client.
+- **Pinned version:** change the version in `args`, e.g. `opsinsight-mcp==<version>`, then restart the client.
 - **GitHub form:** add `"--refresh"` before `"--from"` once to fetch the newest commit, then remove it again.
 
 #### Optional: run as an HTTP server with `uvx`
