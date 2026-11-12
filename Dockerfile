@@ -1,4 +1,4 @@
-FROM python:3.13-slim
+FROM python:3.15-slim
 
 # Pinned for reproducible builds; Dependabot (docker ecosystem) proposes bumps.
 COPY --from=ghcr.io/astral-sh/uv:0.11.16 /uv /uvx /bin/
