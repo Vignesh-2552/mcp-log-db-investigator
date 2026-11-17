@@ -13,10 +13,6 @@ wheels/
 .env
 audit.jsonl
 
-# Editor / AI-tool local config
-.claude/
-.cursor/
-
 
 
 # Tool caches / scratch output

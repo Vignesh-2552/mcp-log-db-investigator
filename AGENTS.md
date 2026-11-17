@@ -122,6 +122,10 @@ risk in the PR description.
 - [Conventional Commits](https://www.conventionalcommits.org/): `feat(scope): ...`,
   `fix(scope): ...`, `test: ...`, `docs: ...`, `refactor: ...`, `chore: ...`.
 - Update `CHANGELOG.md` for user-visible changes.
+- Commit, push, merge or open a PR only when the person you work for asks. Stage files by path
+  (no `git add .`), and never use `--no-verify`, force-push, or stash/reset someone's work.
+- Agent skills live only in `.claude/skills/` (Cursor loads them from there too); a copy under
+  `.cursor/skills/` overrides the shared one and drifts.
 
 ## Things that do not exist (do not assume them)
 
