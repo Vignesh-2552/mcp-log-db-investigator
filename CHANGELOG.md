@@ -6,6 +6,60 @@ to PyPI only once, so every release gets a new number.
 
 ## [Unreleased]
 
+### Added
+- **Response cache with optional Redis backend** (`CACHE_BACKEND=memory|redis|none`, default
+  `memory`). Caches successful, redacted responses for table/column metadata, log groups,
+  New Relic event types/attributes (`CACHE_METADATA_TTL_S`), and CloudWatch Insights results
+  for windows that closed at least `CW_RESULT_CACHE_SETTLE_S` ago (`CW_RESULT_CACHE_TTL_S`),
+  so repeating a past-window query costs no scan. Responses carry `meta.cache`. Redis
+  (`REDIS_URL`, install `opsinsight-mcp[redis]`) shares the cache across replicas; it fails
+  open with a back-off, keys are hashed, and `doctor` checks connectivity.
+
+### Security
+- **DB session hardening now survives pooled connections.** `default_transaction_read_only`,
+  `statement_timeout` and `idle_in_transaction_session_timeout` were applied with `SET` from a
+  pool "connect" listener; SQLAlchemy's asyncpg adapter ran it inside a transaction that was
+  rolled back after the first checkout, so every later checkout had no statement timeout and
+  read-write defaults. They are now asyncpg `server_settings`. Integration test added.
+- Redaction bypasses closed: a sensitive column returned under another name
+  (`password_hash AS x`, `upper(token)`, UNION, column-alias lists) is rejected
+  (`sensitive_column_renamed`), as are whole-row values like `row_to_json(u)`
+  (`whole_row_reference`). DB, AWS and New Relic error details are redacted.
+- `pg_shadow`, `pg_authid`, `pg_stat_activity`, `pg_hba_file_rules` and similar catalogs are
+  blocked (`blocked_table`); `pg_stat_reset*` and `pg_stat_statements_reset` are blocked functions.
+- NRQL: every `LIMIT` and every subquery's `SINCE`/`UNTIL` window are now enforced, not just
+  the first match; the default `SINCE` is injected on the outer query.
+- CloudWatch Insights queries still running when polling ends are stopped instead of being
+  left scanning with no ceiling, and the bytes-scanned ceiling is checked on every poll.
+- GitHub Actions pinned to commit SHAs; the image is published only after CI passes on main.
+
+### Fixed
+- `bytea` and other non-JSON column types no longer crash DB tools (UTF-8 text or `\x` hex).
+- Duplicate column names in a result (`SELECT o.id, u.id ...`) are kept as `id`, `id_2`
+  instead of silently dropping one.
+- `db_resolve_store` applies `DB_MAX_RESPONSE_BYTES` and treats `%`/`_` in the input literally.
+- `cw_filter_events` / `cw_describe_log_fields` follow `nextToken`, so an empty first page no
+  longer reads as "no events".
+- `db_search_by_identifier` ranks entity-named tables (`order_payment` for `order_id`) ahead of
+  unrelated ones under the 25-table cap.
+- Card redaction is Luhn-checked (long numeric ids and epoch microseconds are no longer masked),
+  keeps the following space, and also covers card numbers in integer columns.
+- NRQL `FROM ... SELECT` queries are accepted; a blocked keyword used as an attribute name gets a
+  hint to backtick it. SQL ending in `; -- comment` is accepted.
+- Schema resources go through `DatabaseService` (concurrency slot, error envelope).
+- Numeric settings are validated (e.g. `DB_MAX_CONCURRENT_QUERIES=0` is rejected at startup).
+- `fastmcp` minimum raised to 4.1 (3.x lacks the HTTP Host/Origin options the server passes).
+
+### Added
+- `CW_MAX_RESPONSE_BYTES` and `NR_MAX_RESPONSE_BYTES` (default 1 MB), `meta.truncated` on
+  CloudWatch and NRQL results.
+- `PG_CHECK_TIMEOUT_S` sets the integration-test reachability timeout (default 10 s, was 3 s),
+  so tests against a remote replica no longer skip.
+
+### Changed
+- `cw_run_insights_query` / `cw_get_trace_events` return `status: "Stopped"` instead of
+  `"Running"` when a query outlives `CW_POLL_MAX_WAIT_S`.
+
 ## [0.3.1] - 2026-11-03
 
 ### Fixed

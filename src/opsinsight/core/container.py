@@ -1,10 +1,23 @@
 from opsinsight.core.config import Settings, get_settings
+from opsinsight.core.response_cache import MemoryBackend, ResponseCache
+from opsinsight.integrations.redis.client import RedisBackend
 from opsinsight.service.cloudwatch_logs_service import CloudWatchLogsService
 from opsinsight.service.cloudwatch_metrics_service import CloudWatchMetricsService
 from opsinsight.service.database_service import DatabaseService
 from opsinsight.service.newrelic_service import NewRelicService
 from opsinsight.service.trace_service import TraceService
 from opsinsight.service.trace_sources import default_trace_sources
+
+
+def build_response_cache(settings: Settings) -> ResponseCache:
+    """The one cache every service shares, per CACHE_BACKEND."""
+    if settings.cache_backend == "none":
+        return ResponseCache(None)
+    if settings.cache_backend == "redis":
+        backend = RedisBackend.from_settings(settings)
+    else:
+        backend = MemoryBackend(maxsize=settings.cache_memory_max_entries)
+    return ResponseCache(backend, retry_after_s=settings.cache_retry_after_s)
 
 
 class Container:
@@ -39,8 +52,10 @@ class Container:
         cloudwatch_metrics_service: CloudWatchMetricsService | None = None,
         newrelic_service: NewRelicService | None = None,
         trace_service: TraceService | None = None,
+        response_cache: ResponseCache | None = None,
     ) -> None:
         self._settings_override = settings
+        self._response_cache = response_cache
         self._database_service = database_service
         self._cloudwatch_logs_service = cloudwatch_logs_service
         self._cloudwatch_metrics_service = cloudwatch_metrics_service
@@ -52,15 +67,21 @@ class Container:
         return self._settings_override if self._settings_override is not None else get_settings()
 
     @property
+    def response_cache(self) -> ResponseCache:
+        if self._response_cache is None:
+            self._response_cache = build_response_cache(self.settings)
+        return self._response_cache
+
+    @property
     def database_service(self) -> DatabaseService:
         if self._database_service is None:
-            self._database_service = DatabaseService(self.settings)
+            self._database_service = DatabaseService(self.settings, cache=self.response_cache)
         return self._database_service
 
     @property
     def cloudwatch_logs_service(self) -> CloudWatchLogsService:
         if self._cloudwatch_logs_service is None:
-            self._cloudwatch_logs_service = CloudWatchLogsService(self.settings)
+            self._cloudwatch_logs_service = CloudWatchLogsService(self.settings, cache=self.response_cache)
         return self._cloudwatch_logs_service
 
     @property
@@ -72,7 +93,7 @@ class Container:
     @property
     def newrelic_service(self) -> NewRelicService:
         if self._newrelic_service is None:
-            self._newrelic_service = NewRelicService(self.settings)
+            self._newrelic_service = NewRelicService(self.settings, cache=self.response_cache)
         return self._newrelic_service
 
     @property

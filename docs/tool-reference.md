@@ -552,8 +552,11 @@ Success output:
 }
 ```
 
-If the query is still running, the tool returns `status: "Running"` and a
-`query_id`.
+If the query is still running after `CW_POLL_MAX_WAIT_S`, it is stopped and the tool
+returns `status: "Stopped"` with a note to narrow the window or log groups (no tool can
+resume a `query_id`). The query is also stopped as soon as bytes scanned passes
+`CW_MAX_BYTES_SCANNED`. Rows past `CW_MAX_RESPONSE_BYTES` are dropped and
+`meta.truncated` is set.
 
 Guardrails: log groups must be allowlisted; the `SOURCE` command is rejected
 (`source_command_not_allowed`) so the query text can't pick other log groups;

@@ -130,6 +130,11 @@ def sanitize_error(message: str, settings: Settings | None = None) -> str:
             if token and token in cleaned:
                 cleaned = cleaned.replace(token, "[REDACTED_SECRET]")
 
+        if settings.redis_url:
+            redis_url = settings.redis_url.get_secret_value()
+            if redis_url and redis_url in cleaned:
+                cleaned = cleaned.replace(redis_url, mask_dsn(redis_url))
+
     return cleaned
 
 
@@ -423,6 +428,38 @@ def check_server_security(settings: Settings) -> CheckResult:
     return CheckResult(name="Server Security", status=status, message=message)
 
 
+# ---- Response cache -------------------------------------------------------
+
+def check_cache(settings: Settings, backend_factory: Any = None) -> CheckResult:
+    """CACHE_BACKEND=redis: connect and PING. memory/none: nothing to reach."""
+    if settings.cache_backend != "redis":
+        return CheckResult(
+            name="Response Cache", status=CheckStatus.SKIPPED, message=f"Backend: {settings.cache_backend}"
+        )
+    from opsinsight.integrations.redis.client import RedisBackend, RedisBackendError
+
+    factory = backend_factory or RedisBackend.from_settings
+    started = time.perf_counter()
+    try:
+        factory(settings).ping()
+    except RedisBackendError as e:
+        return CheckResult(name="Response Cache", status=CheckStatus.FAIL, message=str(e), error="Config")
+    except Exception as e:  # noqa: BLE001 - report any connection failure
+        return CheckResult(
+            name="Response Cache",
+            status=CheckStatus.WARN,
+            latency_ms=(time.perf_counter() - started) * 1000,
+            message="Redis unreachable; tools still work, uncached (fail open)",
+            error=sanitize_error(f"{type(e).__name__}: {e}", settings),
+        )
+    return CheckResult(
+        name="Response Cache",
+        status=CheckStatus.PASS,
+        latency_ms=(time.perf_counter() - started) * 1000,
+        message="Redis reachable (PING ok)",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Report formatting
 # ---------------------------------------------------------------------------
@@ -488,6 +525,7 @@ async def run_doctor(settings: Settings | None = None) -> int:
     results.append(await check_cloudwatch(settings))
     results.append(await check_newrelic(settings))
     results.append(check_server_security(settings))
+    results.append(check_cache(settings))
 
     report = format_report(results, opsinsight.__version__)
     print(report, file=sys.stderr)

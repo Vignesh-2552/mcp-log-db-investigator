@@ -103,13 +103,17 @@ def poll_query_with_backoff(
     max_wait_s: int,
     schedule: tuple[float, ...] = BACKOFF_SCHEDULE,
     sleep_fn: Callable[[float], None] = time.sleep,
+    stop_when: Callable[[dict], bool] | None = None,
 ) -> dict:
     """Calls poll_fn() repeatedly with backoff until a terminal status is
-    reported or max_wait_s elapses."""
+    reported, `stop_when(result)` is true (e.g. the bytes-scanned ceiling was
+    crossed mid-query), or max_wait_s elapses."""
     elapsed = 0.0
     result = poll_fn()
     for delay in schedule:
         if result.get("status") not in RUNNING_STATUSES:
+            return result
+        if stop_when is not None and stop_when(result):
             return result
         if elapsed >= max_wait_s:
             break

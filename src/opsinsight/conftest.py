@@ -44,9 +44,11 @@ async def _check_postgres() -> bool:
     "unreachable" too, same as OperationalError. Anything else (e.g.
     ModuleNotFoundError for a missing driver) still propagates."""
     settings = get_settings()
-    engine = create_async_engine(settings.db_dsn, connect_args={"timeout": 2})
+    # Remote replicas can take several seconds to accept a connection.
+    timeout = float(os.environ.get("PG_CHECK_TIMEOUT_S", "10"))
+    engine = create_async_engine(settings.db_dsn, connect_args={"timeout": timeout})
     try:
-        async with asyncio.timeout(3):
+        async with asyncio.timeout(timeout + 1):
             async with engine.connect():
                 pass
         return True

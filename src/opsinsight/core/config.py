@@ -3,7 +3,7 @@ import os
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import SecretStr, model_validator
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _LEGACY_AWS_ENV_VARS = ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION")
@@ -21,20 +21,20 @@ class Settings(BaseSettings):
     # SecretStr: the DSN usually embeds the DB password, so keep it out of
     # repr()/validation errors/logs. Read it via `db_dsn`.
     db_url: SecretStr = SecretStr("postgresql+asyncpg://localhost:5432/appdb")
-    db_max_rows: int = 500
-    db_statement_timeout_ms: int = 15000
-    db_idle_txn_timeout_ms: int = 30000
-    db_max_cell_bytes: int = 4096
+    db_max_rows: int = Field(500, ge=1)
+    db_statement_timeout_ms: int = Field(15000, ge=1)
+    db_idle_txn_timeout_ms: int = Field(30000, ge=1)
+    db_max_cell_bytes: int = Field(4096, ge=64)
     # Cap on the serialized size of the rows one DB tool call returns; rows
     # past it are dropped and the response is marked truncated. Row/cell caps
     # alone still allow ~100 MB (500 rows x many wide columns).
-    db_max_response_bytes: int = 1_000_000
+    db_max_response_bytes: int = Field(1_000_000, ge=1)
     # DB tool calls running at once (per server process). Further calls wait
     # up to db_queue_timeout_s, then fail with `server_busy` instead of piling
     # onto the connection pool.
-    db_max_concurrent_queries: int = 4
-    db_queue_timeout_s: float = 5.0
-    db_schema_cache_ttl_s: int = 600
+    db_max_concurrent_queries: int = Field(4, ge=1)
+    db_queue_timeout_s: float = Field(5.0, gt=0)
+    db_schema_cache_ttl_s: int = Field(600, ge=0)
     db_store_identifier_columns: str = "domain,domain_name,hostname,host,store_name,slug,subdomain"
     db_historical_schema_prefixes: str = "migration"
 
@@ -44,20 +44,24 @@ class Settings(BaseSettings):
     cloudwatch_secret_access_key: SecretStr | None = None
     cloudwatch_region: str | None = None
     cloudwatch_allowed_log_group: str | None = None
-    cw_max_window_hours: int = 168
-    cw_default_window_hours: int = 24
-    cw_max_bytes_scanned: int = 5_000_000_000
-    cw_poll_max_wait_s: int = 60
-    cw_describe_fields_sample_size: int = 50
-    cw_describe_fields_error_boost_size: int = 20
+    cw_max_window_hours: int = Field(168, ge=1)
+    cw_default_window_hours: int = Field(24, ge=1)
+    cw_max_bytes_scanned: int = Field(5_000_000_000, ge=1)
+    cw_poll_max_wait_s: int = Field(60, ge=0)
+    cw_describe_fields_sample_size: int = Field(50, ge=1)
+    cw_describe_fields_error_boost_size: int = Field(20, ge=0)
+    # Cap on the serialized size of rows/events one CloudWatch call returns.
+    cw_max_response_bytes: int = Field(1_000_000, ge=1)
 
     # New Relic (NerdGraph / NRQL)
     new_relic_api_key: SecretStr | None = None
     new_relic_account_id: str | None = None
     new_relic_region: str = "us"
-    nr_max_window_hours: int = 168
-    nr_default_window_hours: int = 24
-    nr_max_rows: int = 500
+    nr_max_window_hours: int = Field(168, ge=1)
+    nr_default_window_hours: int = Field(24, ge=1)
+    nr_max_rows: int = Field(500, ge=1)
+    # Cap on the serialized size of rows one NRQL call returns.
+    nr_max_response_bytes: int = Field(1_000_000, ge=1)
 
     # trace_request (cross-source timeline). Every field can also be passed per
     # call; these are the defaults. A source with nothing configured is skipped.
@@ -70,16 +74,35 @@ class Settings(BaseSettings):
     # unless the call passes db_id_type.
     trace_db_id_type: str = ""
     # Per-source limit on how long trace_request waits before reporting a timeout.
-    trace_source_timeout_s: float = 60.0
-    trace_max_events: int = 500
-    trace_max_response_bytes: int = 1_000_000
+    trace_source_timeout_s: float = Field(60.0, gt=0)
+    trace_max_events: int = Field(500, ge=1)
+    trace_max_response_bytes: int = Field(1_000_000, ge=1)
+
+    # Response cache (core/response_cache.py). Only successful, already-
+    # redacted responses for stable data are cached: catalog/inventory
+    # metadata and CloudWatch Insights results for windows that have closed.
+    # memory = per process (default); redis = shared across replicas and
+    # restarts (needs REDIS_URL and `opsinsight-mcp[redis]`); none = off.
+    cache_backend: Literal["memory", "redis", "none"] = "memory"
+    # redis:// or rediss:// (TLS); may embed a password, so kept secret.
+    redis_url: SecretStr | None = None
+    redis_socket_timeout_s: float = Field(0.5, gt=0)
+    # After a cache error, skip the cache for this long (fail open).
+    cache_retry_after_s: float = Field(30.0, ge=0)
+    cache_memory_max_entries: int = Field(1024, ge=1)
+    # TTL for tables/columns, log groups, NR event types and attributes. 0 = off.
+    cache_metadata_ttl_s: int = Field(600, ge=0)
+    # TTL for Insights results whose window ended at least
+    # CW_RESULT_CACHE_SETTLE_S ago (late-arriving logs settle first). 0 = off.
+    cw_result_cache_ttl_s: int = Field(3600, ge=0)
+    cw_result_cache_settle_s: int = Field(300, ge=0)
 
     # Server
     # Loopback by default. Binding anywhere else requires MCP_AUTH_TOKEN (or an
     # explicit ALLOW_UNAUTHENTICATED_HTTP=true for deployments behind an
     # authenticating proxy) — see core/transport_security.py.
     server_host: str = "127.0.0.1"
-    server_port: int = 8001
+    server_port: int = Field(8001, ge=0, le=65535)
     server_path: str = "/mcp"
     # Bearer token required on every HTTP request when set. Ignored for stdio,
     # which trusts the local process that launched it.
@@ -95,11 +118,29 @@ class Settings(BaseSettings):
     mcp_transport: Literal["streamable-http", "stdio"] | None = None
     # Request rate limit across all clients (token bucket, every MCP request).
     # RATE_LIMIT_RPS=0 disables it.
-    rate_limit_rps: float = 5.0
-    rate_limit_burst: int = 20
+    rate_limit_rps: float = Field(5.0, ge=0)
+    rate_limit_burst: int = Field(20, ge=1)
     pii_redaction: bool = True
     log_level: str = "INFO"
     log_format: str = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+
+    @model_validator(mode="after")
+    def _default_windows_within_max(self) -> "Settings":
+        for source in ("cw", "nr"):
+            default = getattr(self, f"{source}_default_window_hours")
+            maximum = getattr(self, f"{source}_max_window_hours")
+            if default > maximum:
+                raise ValueError(
+                    f"{source.upper()}_DEFAULT_WINDOW_HOURS ({default}) exceeds "
+                    f"{source.upper()}_MAX_WINDOW_HOURS ({maximum})."
+                )
+        return self
+
+    @model_validator(mode="after")
+    def _redis_backend_needs_url(self) -> "Settings":
+        if self.cache_backend == "redis" and self.redis_url is None:
+            raise ValueError("CACHE_BACKEND=redis requires REDIS_URL.")
+        return self
 
     @model_validator(mode="after")
     def _fall_back_server_port_to_platform_port(self) -> "Settings":

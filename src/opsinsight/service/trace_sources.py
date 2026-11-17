@@ -153,8 +153,8 @@ class CloudWatchTraceSource:
         return _query_or_none(self._logs.trace_query, self._field(request), request.value)
 
     def start(self, request: TraceRequest) -> TraceJob:
-        # Nothing resumes a trace's query_id, so a query still running when
-        # polling ends (or when the caller times out) is stopped.
+        # A query still running when polling ends is stopped by the service;
+        # `cancel` also stops it when the caller times out first.
         cancel = threading.Event()
         awaitable = asyncio.to_thread(
             self._logs.get_trace_events,
@@ -164,7 +164,6 @@ class CloudWatchTraceSource:
             request.start_dt.isoformat(),
             request.end_dt.isoformat(),
             request.max_events,
-            stop_if_running=True,
             cancel=cancel,
         )
         return TraceJob(awaitable, cancel)

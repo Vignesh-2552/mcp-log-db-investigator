@@ -9,9 +9,14 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from opsinsight.core.config import Settings
 from opsinsight.core.errors import ToolError
-from opsinsight.core.limits import fit_rows_to_budget, truncate_row_cells
+from opsinsight.core.limits import (
+    fit_rows_to_budget,
+    rows_from_result,
+    truncate_row_cells,
+)
 from opsinsight.core.logging_config import get_logger
 from opsinsight.core.redaction import redact_rows
+from opsinsight.core.response_cache import NULL_CACHE, ResponseCache, scope_fingerprint
 from opsinsight.integrations.database import introspect
 from opsinsight.integrations.database.engine import get_engine
 from opsinsight.integrations.database.guardrail import (
@@ -44,10 +49,15 @@ class DatabaseService(BaseService):
         settings: Settings,
         engine_factory: EngineFactory = get_engine,
         catalog: DatabaseCatalog = introspect,
+        cache: ResponseCache = NULL_CACHE,
     ) -> None:
         super().__init__(settings)
         self._engine_factory = engine_factory
         self._catalog = catalog
+        # Catalog metadata only (list_tables/describe_table); query results
+        # are live data and are never cached.
+        self._cache = cache
+        self._cache_scope = scope_fingerprint("db", settings.db_dsn, settings.pii_redaction)
         # Caps DB tool calls in flight for this service instance (the
         # container keeps one per process), so a burst of calls fails fast
         # with `server_busy` instead of queueing on the connection pool.
@@ -106,6 +116,12 @@ class DatabaseService(BaseService):
         ).to_response()
 
     async def list_tables(self, schema: str | None = None) -> dict:
+        return await self._cache.acached(
+            "db.list_tables", self._cache_scope, [schema], self.settings.cache_metadata_ttl_s,
+            lambda: self._list_tables(schema),
+        )
+
+    async def _list_tables(self, schema: str | None) -> dict:
         try:
             async with self._query_slot():
                 tables = await self._catalog.list_tables(schema, self.settings)
@@ -116,6 +132,12 @@ class DatabaseService(BaseService):
         return self.ok({"tables": [t.to_dict() for t in tables]}, {"row_count": len(tables)})
 
     async def describe_table(self, table: str) -> dict:
+        return await self._cache.acached(
+            "db.describe_table", self._cache_scope, [table.lower()], self.settings.cache_metadata_ttl_s,
+            lambda: self._describe_table(table),
+        )
+
+    async def _describe_table(self, table: str) -> dict:
         try:
             async with self._query_slot():
                 detail = await self._catalog.describe_table(table, self.settings)
@@ -160,20 +182,20 @@ class DatabaseService(BaseService):
                 started = time.perf_counter()
                 async with self._engine_factory(self.settings).connect() as conn:
                     result = await conn.execute(text(validated.sql))
-                    columns = list(result.keys())
-                    raw_rows = result.fetchall()
+                    columns, rows = rows_from_result(list(result.keys()), result.fetchall())
                 elapsed_ms = (time.perf_counter() - started) * 1000
-            logger.info("Executed db_run_query: %d rows returned in %.2f ms", len(raw_rows), elapsed_ms)
+            logger.info("Executed db_run_query: %d rows returned in %.2f ms", len(rows), elapsed_ms)
         except ToolError as e:
             return e.to_response()
         except SQLAlchemyError as e:
             return self._sqlalchemy_error_response(e)
 
-        rows = redact_rows([dict(zip(columns, row)) for row in raw_rows], self.settings)
+        fetched = len(rows)
+        rows = redact_rows(rows, self.settings)
         rows, truncated, _ = self._cap_rows(rows, self.settings.db_max_response_bytes)
         meta: dict = {"row_count": len(rows), "truncated": truncated}
         if truncated:
-            meta.update(self._truncation_meta(len(rows), len(raw_rows)))
+            meta.update(self._truncation_meta(len(rows), fetched))
         return self.ok(
             {
                 "rows": rows,
@@ -219,4 +241,14 @@ class DatabaseService(BaseService):
             return e.to_response()
         except SQLAlchemyError as e:
             return self._sqlalchemy_error_response(e)
-        return self.ok(result.to_dict(), {"candidate_count": len(result.candidates)})
+        # store_id/ambiguous were decided on every candidate; only the rows
+        # shown are capped, in match order, against the response budget.
+        fetched = len(result.candidates)
+        rows, truncated, _ = self._cap_rows([c.row for c in result.candidates], self.settings.db_max_response_bytes)
+        result.candidates = result.candidates[: len(rows)]
+        for candidate, row in zip(result.candidates, rows, strict=True):
+            candidate.row = row
+        meta: dict = {"candidate_count": fetched, "row_count": len(rows), "truncated": truncated}
+        if truncated:
+            meta.update(self._truncation_meta(len(rows), fetched))
+        return self.ok(result.to_dict(), meta)

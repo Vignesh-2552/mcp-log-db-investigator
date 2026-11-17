@@ -12,6 +12,7 @@ from opsinsight.integrations.newrelic.constants import (
     LITERAL_OR_COMMENT_RE,
     MAX_NRQL_CHARS,
     RELATIVE_TIME_RE,
+    SELECT_KEYWORD_RE,
     SELECT_RE,
     SINCE_RE,
     UNIT_HOURS,
@@ -32,6 +33,22 @@ def _mask_literals_and_comments(query: str) -> tuple[str, bool]:
         return "x" * len(match.group())
 
     return LITERAL_OR_COMMENT_RE.sub(_mask, query), has_line_comment
+
+
+def _enclosing_groups(masked: str) -> list[int]:
+    """For each offset, the offset of the innermost unclosed `(` before it, or
+    -1 at the top level. Run on the masked query so parentheses inside
+    literals and comments don't count. Clauses in the same group belong to
+    the same (sub)query."""
+    stack: list[int] = []
+    groups: list[int] = []
+    for i, ch in enumerate(masked):
+        if ch == ")" and stack:
+            stack.pop()
+        groups.append(stack[-1] if stack else -1)
+        if ch == "(":
+            stack.append(i)
+    return groups
 
 
 def _append_clause(query: str, clause: str, has_line_comment: bool) -> str:
@@ -95,7 +112,7 @@ def validate_nrql(query: str, max_rows: int, requested_limit: int | None = None)
             message="Only a single NRQL statement is allowed.",
         )
 
-    if not SELECT_RE.match(masked):
+    if not SELECT_RE.match(masked) or not SELECT_KEYWORD_RE.search(masked):
         raise NewRelicGuardrailError(
             rule="not_select",
             message="Only SELECT NRQL queries are permitted.",
@@ -108,17 +125,29 @@ def validate_nrql(query: str, max_rows: int, requested_limit: int | None = None)
             raise NewRelicGuardrailError(
                 rule="blocked_keyword",
                 message=f"Blocked keyword in query: {keyword}.",
-                detail="Keywords inside quoted strings are allowed; this one is outside a string literal.",
+                detail="Keywords inside quoted strings are allowed. If this is an attribute name, "
+                f"wrap it in backticks (`{keyword.lower()}`).",
             )
 
+    # Every LIMIT is clamped, not just the first one found: a subquery's
+    # LIMIT can't stand in for the outer one, and `LIMIT MAX` is never kept.
     target = min(requested_limit, max_rows) if requested_limit is not None else max_rows
-    match = LIMIT_RE.search(masked)
-    if match:
+    groups = _enclosing_groups(masked)
+    pieces: list[str] = []
+    cursor = 0
+    has_top_level_limit = False
+    for match in LIMIT_RE.finditer(masked):
         existing = match.group(1)
-        if existing.isdigit():
-            target = min(target, int(existing))
-        return f"{stripped[: match.start()]}LIMIT {target}{stripped[match.end():]}"
-    return _append_clause(stripped, f"LIMIT {target}", has_line_comment)
+        top_level = groups[match.start()] == -1
+        cap = target if top_level else max_rows
+        value = min(cap, int(existing)) if existing.isdigit() else cap
+        has_top_level_limit = has_top_level_limit or top_level
+        pieces.append(f"{stripped[cursor: match.start()]}LIMIT {value}")
+        cursor = match.end()
+    result = "".join(pieces) + stripped[cursor:]
+    if has_top_level_limit:
+        return result
+    return _append_clause(result, f"LIMIT {target}", has_line_comment)
 
 
 def _parse_time_point(operand: str, now: datetime) -> datetime | None:
@@ -148,41 +177,9 @@ def _parse_time_point(operand: str, now: datetime) -> datetime | None:
     return None
 
 
-def enforce_nrql_window(
-    query: str,
-    default_hours: int,
-    max_hours: int,
-    now: datetime | None = None,
-) -> str:
-    """Caps the query's SINCE/UNTIL span at `max_hours`, injecting
-    `SINCE <default_hours> hours ago` when the query has no SINCE. Accepts
-    relative (`SINCE 3 hours ago`), named (`now`, `today`, `yesterday`),
-    epoch (seconds or millis) and quoted ISO-date operands; anything else is
-    rejected so an unbounded or unparseable range can't slip through. Run on
-    `validate_nrql`'s output (trailing `;` already stripped)."""
-    now = now or datetime.now(UTC)
-    masked, has_line_comment = _mask_literals_and_comments(query)
-
-    since_match = SINCE_RE.search(masked)
-    if since_match is None:
-        if UNTIL_RE.search(masked):
-            raise NewRelicGuardrailError(
-                rule="until_without_since",
-                message="UNTIL requires a SINCE clause.",
-                detail=f"Add e.g. `SINCE {default_hours} hours ago` before UNTIL.",
-            )
-        clause = f"SINCE {default_hours} hours ago"
-        limit_match = LIMIT_RE.search(masked)
-        if limit_match:
-            return f"{query[: limit_match.start()]}{clause} {query[limit_match.start():]}"
-        return _append_clause(query, clause, has_line_comment)
-
-    since_operand = query[since_match.start(1) : since_match.end(1)]
+def _check_span(since_operand: str, until_operand: str, now: datetime, max_hours: int) -> None:
     since_dt = _parse_time_point(since_operand, now)
-    until_match = UNTIL_RE.search(masked)
-    until_operand = query[until_match.start(1) : until_match.end(1)] if until_match else "now"
     until_dt = _parse_time_point(until_operand, now)
-
     unsupported = [op for op, dt in ((since_operand, since_dt), (until_operand, until_dt)) if dt is None]
     if unsupported:
         raise NewRelicGuardrailError(
@@ -193,10 +190,8 @@ def enforce_nrql_window(
                 "epoch milliseconds, or a quoted date like `SINCE '2026-10-28 14:00:00'`."
             ),
         )
-
     if since_dt >= until_dt:
         raise NewRelicGuardrailError(rule="invalid_window", message="SINCE must be before UNTIL.")
-
     span_hours = (until_dt - since_dt).total_seconds() / 3600
     if span_hours > max_hours:
         raise NewRelicGuardrailError(
@@ -204,4 +199,51 @@ def enforce_nrql_window(
             message=f"Requested window ({span_hours:.1f}h) exceeds the max of {max_hours}h.",
             detail=f"Narrow SINCE/UNTIL to at most {max_hours} hours.",
         )
-    return query
+
+
+def enforce_nrql_window(
+    query: str,
+    default_hours: int,
+    max_hours: int,
+    now: datetime | None = None,
+) -> str:
+    """Caps every (sub)query's SINCE/UNTIL span at `max_hours`, injecting
+    `SINCE <default_hours> hours ago` at the top level when the outer query
+    has no SINCE. A subquery without SINCE inherits the outer window. Accepts
+    relative (`SINCE 3 hours ago`), named (`now`, `today`, `yesterday`),
+    epoch (seconds or millis) and quoted ISO-date operands; anything else is
+    rejected so an unbounded or unparseable range can't slip through. Run on
+    `validate_nrql`'s output (trailing `;` already stripped)."""
+    now = now or datetime.now(UTC)
+    masked, has_line_comment = _mask_literals_and_comments(query)
+    groups = _enclosing_groups(masked)
+
+    def first_per_group(pattern: re.Pattern[str]) -> dict[int, re.Match[str]]:
+        found: dict[int, re.Match[str]] = {}
+        for match in pattern.finditer(masked):
+            found.setdefault(groups[match.start()], match)
+        return found
+
+    sinces = first_per_group(SINCE_RE)
+    untils = first_per_group(UNTIL_RE)
+
+    for group, until_match in untils.items():
+        if group not in sinces:
+            raise NewRelicGuardrailError(
+                rule="until_without_since",
+                message="UNTIL requires a SINCE clause in the same (sub)query.",
+                detail=f"Add e.g. `SINCE {default_hours} hours ago` before UNTIL.",
+            )
+    for group, since_match in sinces.items():
+        since_operand = query[since_match.start(1) : since_match.end(1)]
+        until_match = untils.get(group)
+        until_operand = query[until_match.start(1) : until_match.end(1)] if until_match else "now"
+        _check_span(since_operand, until_operand, now, max_hours)
+
+    if -1 in sinces:
+        return query
+    clause = f"SINCE {default_hours} hours ago"
+    top_limit = next((m for m in LIMIT_RE.finditer(masked) if groups[m.start()] == -1), None)
+    if top_limit:
+        return f"{query[: top_limit.start()]}{clause} {query[top_limit.start():]}"
+    return _append_clause(query, clause, has_line_comment)

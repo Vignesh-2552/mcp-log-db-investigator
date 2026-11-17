@@ -11,7 +11,9 @@ import re
 # masked out (see guardrail._mask_literals_and_comments), so text inside
 # `WHERE message LIKE '%update;%'` can't trip a check.
 
-SELECT_RE = re.compile(r"^\s*SELECT\s", re.IGNORECASE)
+# NRQL accepts both `SELECT ... FROM` and `FROM ... SELECT`.
+SELECT_RE = re.compile(r"^\s*(?:SELECT|FROM)\s", re.IGNORECASE)
+SELECT_KEYWORD_RE = re.compile(r"\bSELECT\b", re.IGNORECASE)
 LIMIT_RE = re.compile(r"\bLIMIT\s+(\d+|MAX)\b", re.IGNORECASE)
 
 BLOCKED_KEYWORDS = ("DELETE", "INSERT", "UPDATE", "CREATE", "DROP", "ALTER", "GRANT", "TRUNCATE")
@@ -38,8 +40,9 @@ LITERAL_OR_COMMENT_RE = re.compile(
 )
 
 # SINCE/UNTIL operand: everything up to the next clause keyword.
+# A `)` also ends an operand, for SINCE/UNTIL inside a subquery.
 _CLAUSE_END = (
-    r"(?=\s+(?:UNTIL|SINCE|LIMIT|FACET|TIMESERIES|WHERE|COMPARE|WITH|EXTRAPOLATE|"
+    r"(?=\s*\)|\s+(?:UNTIL|SINCE|LIMIT|FACET|TIMESERIES|WHERE|COMPARE|WITH|EXTRAPOLATE|"
     r"ORDER|SLIDE|AS|OFFSET|RAW)\b|\s*$)"
 )
 SINCE_RE = re.compile(rf"\bSINCE\s+(.+?){_CLAUSE_END}", re.IGNORECASE | re.DOTALL)

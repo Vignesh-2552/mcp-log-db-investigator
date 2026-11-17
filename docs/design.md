@@ -256,10 +256,12 @@ This is the section that must not be compromised — the server has production d
 
 - **Read-only connection.** `DB_URL` is expected to point at a replica (or at least a read-only role). The application does not enforce replica-vs-primary; that is an ops concern.
 - **Dedicated role.** `CREATE ROLE mcp_ro LOGIN; GRANT USAGE ON SCHEMA ... ; GRANT SELECT ON ALL TABLES ...`. No `INSERT/UPDATE/DELETE/CREATE/DROP`. The DB itself is the last line of defence, not the app. There is no `DB_TABLE_ALLOWLIST`.
-- **Session hardening** on every new physical connection (`integrations/database/engine.py`):
-  - `SET default_transaction_read_only = on;`
-  - `SET statement_timeout = '<DB_STATEMENT_TIMEOUT_MS>ms';` (default 15 s)
-  - `SET idle_in_transaction_session_timeout = '<DB_IDLE_TXN_TIMEOUT_MS>ms';` (default 30 s)
+- **Session hardening** on every connection (`integrations/database/engine.py`), sent as asyncpg
+  `server_settings` in the startup packet so they are session defaults that survive every pooled
+  checkout (a `SET` from a pool listener was rolled back after the first checkout):
+  - `default_transaction_read_only = on`
+  - `statement_timeout = '<DB_STATEMENT_TIMEOUT_MS>ms'` (default 15 s)
+  - `idle_in_transaction_session_timeout = '<DB_IDLE_TXN_TIMEOUT_MS>ms'` (default 30 s)
 - **AST validation** before execution using `sqlglot` (`integrations/database/guardrail.py`):
   - Parse the statement. Reject if it fails to parse.
   - Reject if more than one statement (blocks `; DROP TABLE`).
@@ -281,7 +283,7 @@ This is the section that must not be compromised — the server has production d
   No `logs:PutLogEvents`, no `logs:DeleteLogGroup`.
 - Resource-scoped to `CLOUDWATCH_ALLOWED_LOG_GROUP` (comma-separated). Region always comes from `CLOUDWATCH_REGION` — there is no `AWS_REGION` fallback. Auth is `CLOUDWATCH_ACCESS_KEY_ID`/`CLOUDWATCH_SECRET_ACCESS_KEY`, else `AWS_PROFILE`, else boto3's default credential chain.
 - **Cost ceiling.** Logs Insights bills per GB scanned. Enforce: max time window (`CW_MAX_WINDOW_HOURS`, default 7 days; default window `CW_DEFAULT_WINDOW_HOURS` = 24 h), mandatory `limit` on `StartQuery`, abort + report if `bytesScanned` exceeds `CW_MAX_BYTES_SCANNED`. Bytes scanned is always returned in `meta`. On ceiling exceeded, the service also suggests a narrower window from the observed scan rate.
-- **Polling.** `poll_query_with_backoff` up to `CW_POLL_MAX_WAIT_S` (default 60 s). If still running, return `query_id` so the caller can continue rather than failing hard.
+- **Polling.** `poll_query_with_backoff` up to `CW_POLL_MAX_WAIT_S` (default 60 s). If still running, stop the query and return `status: Stopped` (no tool resumes a `query_id`, and a running query would keep scanning past the bytes ceiling). The ceiling is checked on every poll.
 - **`cw_get_trace_events` / `trace_request` injection surface.** Logs Insights has no parameterized-query API. `field` must match a field-name regex; `value` has `\`/`"` escaped and embedded newlines rejected.
 
 ### 6.3 New Relic
@@ -414,7 +416,7 @@ Every guardrail raises a `ToolError` subclass (`GuardrailError`, `CWGuardrailErr
 |---|---|
 | SQL / NRQL fails validation | Structured error naming the rule (`parse_error`, `root_not_select`, `blocked_function`, `not_select`, …) and the offending clause. The model can self-correct. |
 | Query timeout | `rule=query_timeout`; suggests narrowing the window and using `db_explain_query`. The EXPLAIN plan is **not** auto-attached. |
-| Logs Insights still running after poll budget | Return `ok: true` with `status: Running` and `query_id` rather than failing. `trace_request` instead stops the query (nothing resumes its `query_id`) and reports the source as `running` |
+| Logs Insights still running after poll budget | Stop the query and return `ok: true` with `status: Stopped` and a note to narrow the window. `trace_request` reports the source as `running` |
 | Log group not in allowlist | `rule=log_group_not_allowed` plus the list of allowed groups |
 | Bytes-scanned ceiling | `rule=bytes_scanned_ceiling_exceeded`; `meta.bytes_scanned` plus a suggested narrower window when scan rate is known |
 | Empty result | Return `rows: []` (and a `note` on inventory/grounding tools when the window was empty) — never fabricate |

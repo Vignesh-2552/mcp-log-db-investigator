@@ -188,3 +188,78 @@ def test_truncate_cell_over_limit_truncated():
 def test_truncate_cell_non_string_passthrough():
     assert truncate_cell(42, max_bytes=4096) == 42
     assert truncate_cell(None, max_bytes=4096) is None
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT password_hash AS x FROM users",
+        "SELECT upper(token) FROM sessions",
+        "SELECT name FROM a UNION SELECT password_hash FROM users",
+        "SELECT x FROM (SELECT api_key FROM integrations) AS s(x)",
+        "WITH c(x) AS (SELECT client_secret FROM apps) SELECT x FROM c",
+    ],
+)
+def test_sensitive_column_cannot_be_renamed(sql):
+    with pytest.raises(GuardrailError) as exc:
+        validate_sql(sql, max_rows=500)
+    assert exc.value.rule == "sensitive_column_renamed"
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT id, password_hash FROM users",
+        "SELECT token AS session_token FROM sessions",
+        "SELECT count(token) AS n FROM sessions",
+        "SELECT id FROM sessions WHERE token IS NOT NULL ORDER BY id",
+        "SELECT u.* FROM users u",
+        "SELECT * FROM users",
+        "SELECT u.*, o.id FROM users u JOIN orders o ON o.user_id = u.id",
+        "SELECT count(*) FROM users",
+        "SELECT count(u.*) FROM users u",
+        "SELECT * FROM (SELECT * FROM users) s",
+    ],
+)
+def test_sensitive_column_under_a_masked_name_is_allowed(sql):
+    validate_sql(sql, max_rows=500)
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT u FROM users u",
+        "SELECT row_to_json(u) FROM users u",
+        "SELECT row_to_json(users.*) FROM users",
+        "SELECT row_to_json(t.*) FROM users AS t",
+        "SELECT json_agg(users.*) FROM users",
+        "SELECT jsonb_agg(t.*) FROM users t",
+        "SELECT array_agg(t.*) FROM users t",
+        "SELECT COALESCE(row_to_json(users.*), '{}') FROM users",
+        "SELECT (u.*)::text FROM users u",
+        "SELECT id FROM (SELECT row_to_json(u.*) AS r FROM users u) s",
+    ],
+)
+def test_whole_row_reference_is_rejected(sql):
+    with pytest.raises(GuardrailError) as exc:
+        validate_sql(sql, max_rows=500)
+    assert exc.value.rule == "whole_row_reference"
+
+
+@pytest.mark.parametrize("table", ["pg_shadow", "pg_catalog.pg_authid", "pg_stat_activity", "pg_hba_file_rules"])
+def test_sensitive_system_tables_are_blocked(table):
+    with pytest.raises(GuardrailError) as exc:
+        validate_sql(f"SELECT * FROM {table}", max_rows=500)
+    assert exc.value.rule == "blocked_table"
+
+
+@pytest.mark.parametrize("fn", ["pg_stat_reset()", "pg_stat_statements_reset()"])
+def test_stats_reset_functions_are_blocked(fn):
+    with pytest.raises(GuardrailError) as exc:
+        validate_sql(f"SELECT {fn}", max_rows=500)
+    assert exc.value.rule == "blocked_function"
+
+
+@pytest.mark.parametrize("sql", ["SELECT 1; -- trailing note", "SELECT 1; /* note */"])
+def test_trailing_comment_after_semicolon_is_one_statement(sql):
+    assert validate_sql(sql, max_rows=500).sql.upper().startswith("SELECT 1")

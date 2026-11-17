@@ -10,7 +10,11 @@ from sqlalchemy.exc import OperationalError
 
 from opsinsight.core.config import Settings
 from opsinsight.integrations.database import introspect
-from opsinsight.integrations.database.models import SampleRowsResult
+from opsinsight.integrations.database.models import (
+    SampleRowsResult,
+    StoreCandidate,
+    StoreResolutionResult,
+)
 from opsinsight.service.database_service import DatabaseService
 
 
@@ -180,18 +184,69 @@ async def test_sample_rows_caps_rows(monkeypatch: pytest.MonkeyPatch):
 
 
 async def test_resolve_store_reports_candidate_count(monkeypatch: pytest.MonkeyPatch):
-    class _StoreResult(_Dictable):
-        pass
-
     async def fake_resolve(name, settings):
-        return _StoreResult(query=name, candidates=[{"store_id": 1}, {"store_id": 2}], ambiguous=True)
+        return _store_result([StoreCandidate("public.stores", "domain", i, {"id": i}) for i in (1, 2)])
 
     monkeypatch.setattr(introspect, "resolve_store", fake_resolve)
 
     result = await _service().resolve_store("shop")
 
-    assert result["meta"] == {"candidate_count": 2}
+    assert result["meta"] == {"candidate_count": 2, "row_count": 2, "truncated": False}
     assert result["data"]["ambiguous"] is True
+
+
+async def test_resolve_store_caps_candidate_rows_to_response_budget(monkeypatch: pytest.MonkeyPatch):
+    async def fake_resolve(name, settings):
+        rows = [StoreCandidate("public.stores", "domain", i, {"id": i, "note": "x" * 200}) for i in range(50)]
+        return _store_result(rows)
+
+    monkeypatch.setattr(introspect, "resolve_store", fake_resolve)
+
+    result = await _service(db_max_response_bytes=1000).resolve_store("shop")
+
+    assert result["meta"]["candidate_count"] == 50
+    assert 0 < len(result["data"]["candidates"]) == result["meta"]["row_count"] < 50
+    assert result["meta"]["truncated"] is True
+    assert result["data"]["ambiguous"] is True  # decided on all 50, not the shown rows
+
+
+def _store_result(candidates):
+    return StoreResolutionResult(
+        name_or_domain="shop",
+        searched_columns=["public.stores.domain"],
+        truncated=False,
+        ambiguous=len({c.store_id for c in candidates}) > 1,
+        store_id=None,
+        candidates=candidates,
+        skipped=[],
+        note=None,
+    )
+
+
+async def test_run_query_keeps_both_duplicate_columns(engine):
+    engine.result = _Result(["id", "id", "name"], [(1, 2, "x")])
+
+    result = await _service(engine).run_query("SELECT o.id, u.id, u.name FROM o JOIN u ON true")
+
+    assert result["data"]["columns"] == ["id", "id_2", "name"]
+    assert result["data"]["rows"] == [{"id": 1, "id_2": 2, "name": "x"}]
+
+
+async def test_run_query_returns_binary_cells_as_hex(engine):
+    engine.result = _Result(["blob", "text_blob"], [(b"\xff\x00", b"hello")])
+
+    result = await _service(engine).run_query("SELECT blob, text_blob FROM t")
+
+    assert result["data"]["rows"] == [{"blob": "\\xff00", "text_blob": "hello"}]
+
+
+async def test_db_error_detail_is_redacted(engine):
+    engine.exc = _db_error('invalid input syntax for type integer: "jane@example.com"')
+
+    result = await _service(engine).run_query("SELECT email::int FROM users")
+
+    assert "jane@example.com" not in result["error"]["detail"]
+    assert "[REDACTED_EMAIL]" in result["error"]["detail"]
 
 
 @pytest.mark.parametrize(
@@ -245,3 +300,29 @@ async def test_catalog_is_constructor_injected():
     result = await service.list_tables("public")
     assert result["ok"] is True
     assert result["data"]["tables"][0]["table"] == "public.orders"
+
+
+async def test_catalog_metadata_is_cached_but_queries_are_not(engine):
+    from opsinsight.core.response_cache import MemoryBackend, ResponseCache
+    from opsinsight.integrations.database.models import TableSummary
+
+    calls = []
+
+    class _Catalog:
+        async def list_tables(self, schema, settings=None):
+            calls.append(schema)
+            return [TableSummary(table="public.t", row_estimate=1, comment=None)]
+
+    engine.result = _Result(["n"], [(1,)])
+    service = DatabaseService(
+        Settings(), engine_factory=lambda s: engine, catalog=_Catalog(), cache=ResponseCache(MemoryBackend())
+    )
+
+    await service.list_tables("public")
+    second = await service.list_tables("public")
+    await service.run_query("SELECT 1 AS n")
+    await service.run_query("SELECT 1 AS n")
+
+    assert calls == ["public"]
+    assert second["meta"]["cache"] == "hit"
+    assert len(engine.executed) == 2  # live data always re-queried

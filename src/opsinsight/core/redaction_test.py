@@ -143,3 +143,24 @@ def test_redact_log_event_preserves_uuid_inside_json_text():
 def test_redaction_disabled_passes_through_unchanged():
     message = "card 4111 1111 1111 1111 uuid 00000000-0000-0000-0000-000000000000"
     assert redact_log_event(message, _DISABLED) == message
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "order 1234567890123456789 failed",  # 19-digit snowflake id, fails Luhn
+        "ts=1790000000000000 micros",  # epoch microseconds
+    ],
+)
+def test_long_numeric_ids_are_not_masked_as_cards(text):
+    assert redact_text(text) == text
+
+
+def test_card_mask_keeps_following_space():
+    assert redact_text("user 4111 1111 1111 1111 paid") == "user [REDACTED_CARD] paid"
+
+
+def test_card_number_in_integer_cell_is_masked():
+    row = redact_row({"card_no": 4111111111111111, "order_id": 5550001234, "big_id": 1234567890123456789},
+                     Settings(pii_redaction=True))
+    assert row == {"card_no": "[REDACTED_CARD]", "order_id": 5550001234, "big_id": 1234567890123456789}

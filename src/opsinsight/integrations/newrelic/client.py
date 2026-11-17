@@ -3,6 +3,7 @@ import httpx
 from opsinsight.core.config import Settings, get_settings
 from opsinsight.core.errors import ToolError
 from opsinsight.core.logging_config import get_logger
+from opsinsight.core.redaction import redact_text
 from opsinsight.integrations.newrelic.models import NrqlRunResult
 from opsinsight.integrations.newrelic.queries import NRQL_GRAPHQL_QUERY
 
@@ -46,7 +47,7 @@ async def run_nrql(query: str, settings: Settings | None = None) -> dict:
         raise ToolError(
             rule="newrelic_api_error",
             message="New Relic API returned an error.",
-            detail=str(payload["errors"])[:1000],
+            detail=redact_text(str(payload["errors"])[:1000]),
         )
 
     account = ((payload.get("data") or {}).get("actor") or {}).get("account")
@@ -54,7 +55,7 @@ async def run_nrql(query: str, settings: Settings | None = None) -> dict:
         raise ToolError(
             rule="newrelic_api_error",
             message="New Relic API did not return account data. Check NEW_RELIC_ACCOUNT_ID and API key permissions.",
-            detail=str(payload)[:1000],
+            detail=redact_text(str(payload)[:1000]),
         )
 
     nrql_result = account.get("nrql") or {}

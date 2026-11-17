@@ -42,6 +42,7 @@ uv run pytest -m "not integration"            # unit tests, no external deps
 uv run pytest src/opsinsight/integrations/database/guardrail_test.py -q  # one test file
 uv run pytest -k test_limit_clamped              # one test by name
 uv run pytest -m integration                     # requires a reachable Postgres; auto-skips otherwise
+                                                 # (reachability timeout: PG_CHECK_TIMEOUT_S, default 10)
 uv run ruff check .                              # lint
 uv run investigation-server                      # start the MCP server (streamable HTTP, :8001/mcp by default)
 ```
@@ -175,6 +176,14 @@ needs a fake client/network call in tests.
 (email/card/Aadhaar/PAN/phone) applied to both DB row values and raw log message text.
 Every tool that returns rows/log content calls `redact_rows`/`redact_log_event` right before
 building its response — do the same in new tools rather than relying on upstream masking.
+Because masking keys on the *output* column name, `validate_sql` rejects a sensitive column
+that would come back under another name (`password_hash AS x`, `upper(token)`, UNION branches,
+column-alias lists: `sensitive_column_renamed`) and whole-row values (`row_to_json(u)`:
+`whole_row_reference`). Error `detail` strings are redacted too (`sqlalchemy_error_detail`,
+`aws_error_response`, the NR error paths), since Postgres echoes offending values. Card numbers
+are Luhn-checked so long numeric ids aren't masked. DB cells go through `core/limits.py`'s
+`rows_from_result` (JSON-safe values, `bytea` as text or `\x` hex, duplicate column names
+suffixed `_2`) *before* redaction.
 
 **The query cookbook (`src/opsinsight/data/query_cookbook.yaml`, exposed as the `docs://query-cookbook`
 resource) is a deliberate accuracy lever**, not just documentation — per design doc §4.4,
@@ -184,8 +193,27 @@ repeated bad queries, add/update a cookbook entry rather than only fixing it in 
 
 **CloudWatch cost/window safety**: `cw_run_insights_query` enforces a time-window cap
 (`clamp_window`), polls with exponential backoff (`poll_query_with_backoff`), and aborts +
-reports if `bytesScanned` exceeds `CW_MAX_BYTES_SCANNED` — bytes scanned is always logged and
-returned in `meta`, since Logs Insights bills per GB scanned.
+reports as soon as `bytesScanned` exceeds `CW_MAX_BYTES_SCANNED` (checked on every poll, not
+just at the end) — bytes scanned is always logged and returned in `meta`, since Logs Insights
+bills per GB scanned. A query still running when `CW_POLL_MAX_WAIT_S` runs out is **stopped**
+and reported as `status: "Stopped"`: no tool accepts a `query_id`, so a query left running would
+keep scanning with no ceiling. `filter_log_events` calls follow `nextToken` (up to
+`FILTER_EVENTS_MAX_PAGES`), since AWS returns empty pages mid-scan. CloudWatch and NRQL rows are
+capped at `CW_MAX_RESPONSE_BYTES` / `NR_MAX_RESPONSE_BYTES` (`meta.truncated`).
+
+**Response cache** (`core/response_cache.py`, `CACHE_BACKEND=memory|redis|none`): one
+`ResponseCache` built in `Container.response_cache` and constructor-injected (`cache=`) into
+`DatabaseService`, `CloudWatchLogsService` and `NewRelicService` (default `NULL_CACHE`, so unit
+tests are uncached unless they pass one). Public methods wrap a private `_method` with
+`cache.cached(...)` (sync, CloudWatch) or `cache.acached(...)` (async). Only successful,
+already-redacted responses for stable data are stored: catalog/inventory metadata
+(`CACHE_METADATA_TTL_S`) and CloudWatch Insights results whose window closed at least
+`CW_RESULT_CACHE_SETTLE_S` ago and finished `Complete` (`CW_RESULT_CACHE_TTL_S`). Never cache
+`run_query`, NRQL, or an open window. Each service's `_cache_scope` (`scope_fingerprint`) must
+include everything that changes the response (DSN/account/region, allowlist, response budget,
+`pii_redaction`). The cache fails open: backend errors become misses and the backend is skipped
+for `CACHE_RETRY_AFTER_S`. The Redis backend (`integrations/redis/client.py`, optional
+`[redis]` extra) is the only cache I/O; `doctor`'s `check_cache` PINGs it.
 
 **Engines and clients are cached per configuration, not globally**: `get_engine(settings)` keys
 on DSN + session timeouts and `get_logs_client`/`get_metrics_client` key on region + credentials,
@@ -197,7 +225,10 @@ results are per-database too.
 over the query with string literals and comments blanked out (same length, so offsets map back),
 so `WHERE message LIKE '%update;%'` isn't rejected. `nr_run_nrql_query` also caps the
 `SINCE`/`UNTIL` span at `NR_MAX_WINDOW_HOURS` and injects `SINCE NR_DEFAULT_WINDOW_HOURS hours
-ago` when absent; unparseable `SINCE` forms are rejected (`unsupported_time_range`).
+ago` when absent; unparseable `SINCE` forms are rejected (`unsupported_time_range`). Both are
+parenthesis-depth aware (`_enclosing_groups`): every `LIMIT` is clamped (a subquery's
+`LIMIT MAX` included), every (sub)query's `SINCE`/`UNTIL` span is capped, and the default
+`SINCE`/outer `LIMIT` go on the top-level query, never into a subquery.
 
 **HTTP transport security** lives in `core/transport_security.py` and is applied only in
 `server.run()` for the HTTP transport: `MCP_AUTH_TOKEN` bearer auth (fail closed on a non-loopback
@@ -210,10 +241,15 @@ means updating that set after reviewing it for authorization, redaction and audi
 `UNION`/`INTERSECT`/`EXCEPT` only, blocked node types incl. `SELECT INTO`/`FOR UPDATE`, a dangerous-function denylist matched by exact
 name *and* prefix — `dblink*`, `pg_sleep*`, advisory locks, `lo_*`, `query_to_xml` and friends —
 LIMIT injection/clamping) in
-`integrations/database/guardrail.py`, *plus* session-level hardening applied on every new
-physical connection in `integrations/database/engine.py` (`SET default_transaction_read_only
-= on`, statement timeout, idle-in-transaction timeout) — the DB role itself is meant to be the
-last line of defense, not the application layer alone.
+`integrations/database/guardrail.py`, *plus* session-level hardening in
+`integrations/database/engine.py` (`default_transaction_read_only = on`, statement timeout,
+idle-in-transaction timeout), sent as asyncpg `server_settings` in the connection startup
+packet. Don't move these to a `SET` in a pool "connect" listener: SQLAlchemy's asyncpg adapter
+runs it inside an implicit transaction that is rolled back after the first checkout, silently
+dropping the timeout (`test_session_hardening_survives_pooled_checkouts` catches this). The
+guardrail also blocks credential/session catalogs (`BLOCKED_TABLES`: `pg_shadow`,
+`pg_stat_activity`, ...) — the DB role itself is meant to be the last line of defense, not the
+application layer alone.
 
 **Load limits**:
 - **Rate limit:** `core/rate_limit.py` builds a global FastMCP `RateLimitingMiddleware` (`RATE_LIMIT_RPS`/`RATE_LIMIT_BURST`). It is added in `server.run()`, after `AuditMiddleware`, so rejected requests are still audited.

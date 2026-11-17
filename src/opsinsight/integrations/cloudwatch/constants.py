@@ -19,6 +19,10 @@ MAX_INSIGHTS_QUERY_CHARS = 10_000
 # Hard cap on `limit` passed to filter_log_events, not caller-configurable.
 FILTER_EVENTS_CAP = 1000
 
+# filter_log_events can return an empty page with a nextToken (it scans
+# streams in chunks), so pages are followed up to this many calls.
+FILTER_EVENTS_MAX_PAGES = 10
+
 # Back-solving a suggested retry window targets this fraction of the byte
 # ceiling, not 100% of it.
 BYTES_SCANNED_SAFETY_MARGIN = 0.8

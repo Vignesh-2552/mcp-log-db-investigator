@@ -77,6 +77,26 @@ DANGEROUS_FUNCTION_PREFIXES = (
     "pg_backup_",
     "pg_start_backup",
     "pg_stop_backup",
+    # Wipe cumulative statistics other operators rely on.
+    "pg_stat_reset",
+    "pg_stat_statements_reset",
+)
+
+# System catalogs/views refused by bare name (any schema): password hashes,
+# auth config, foreign-server credentials, and other sessions' live query
+# text (which carries unredacted literals from every client of the DB).
+BLOCKED_TABLES = frozenset(
+    {
+        "pg_authid",
+        "pg_shadow",
+        "pg_user_mapping",
+        "pg_user_mappings",
+        "pg_hba_file_rules",
+        "pg_ident_file_rules",
+        "pg_file_settings",
+        "pg_stat_activity",
+        "pg_stat_statements",
+    }
 )
 
 # Longest SQL text accepted. Bounds parser CPU/memory on hostile input.
