@@ -214,13 +214,32 @@ def test_sensitive_column_cannot_be_renamed(sql):
         "SELECT count(token) AS n FROM sessions",
         "SELECT id FROM sessions WHERE token IS NOT NULL ORDER BY id",
         "SELECT u.* FROM users u",
+        "SELECT * FROM users",
+        "SELECT u.*, o.id FROM users u JOIN orders o ON o.user_id = u.id",
+        "SELECT count(*) FROM users",
+        "SELECT count(u.*) FROM users u",
+        "SELECT * FROM (SELECT * FROM users) s",
     ],
 )
 def test_sensitive_column_under_a_masked_name_is_allowed(sql):
     validate_sql(sql, max_rows=500)
 
 
-@pytest.mark.parametrize("sql", ["SELECT u FROM users u", "SELECT row_to_json(u) FROM users u"])
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT u FROM users u",
+        "SELECT row_to_json(u) FROM users u",
+        "SELECT row_to_json(users.*) FROM users",
+        "SELECT row_to_json(t.*) FROM users AS t",
+        "SELECT json_agg(users.*) FROM users",
+        "SELECT jsonb_agg(t.*) FROM users t",
+        "SELECT array_agg(t.*) FROM users t",
+        "SELECT COALESCE(row_to_json(users.*), '{}') FROM users",
+        "SELECT (u.*)::text FROM users u",
+        "SELECT id FROM (SELECT row_to_json(u.*) AS r FROM users u) s",
+    ],
+)
 def test_whole_row_reference_is_rejected(sql):
     with pytest.raises(GuardrailError) as exc:
         validate_sql(sql, max_rows=500)
