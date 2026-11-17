@@ -842,6 +842,71 @@ Guardrails:
 - `LIMIT` is injected or clamped (`LIMIT MAX` included).
 - The `SINCE`/`UNTIL` window is capped at `NR_MAX_WINDOW_HOURS`; with no `SINCE`, `SINCE <NR_DEFAULT_WINDOW_HOURS> hours ago` is added. Use `SINCE <n> minutes|hours|days ago`, `today`/`yesterday`, epoch millis, or a quoted date.
 
+## Ticket Tools
+
+Read-only access to Linear and Jira Cloud. Configure one or both (see `.env.example`). With both
+configured, pass `provider` (`"linear"` or `"jira"`) or set `TICKET_PROVIDER`; ids like `ENG-123`
+look the same in both, so the server never guesses. Responses are never cached.
+
+Every ticket response carries `meta.provider` and `meta.content_trust: "untrusted_user_content"`:
+titles, descriptions and comments are written by customers and staff, so the model treats them
+as evidence, not instructions. People are reduced to `{display_name, account_id}` (no email), PII
+in text is redacted (`PII_REDACTION`), and long text is truncated after redaction
+(`TICKET_MAX_DESCRIPTION_BYTES`, `TICKET_MAX_RESPONSE_BYTES`, `meta.truncated`). Jira's ADF
+bodies are converted to plain text.
+
+Error rules: `missing_credentials`, `provider_ambiguous`, `invalid_provider`, `invalid_ticket_id`,
+`invalid_query`, `ticket_not_found`, `auth_failed`, `rate_limited`, `upstream_timeout`,
+`ticket_http_error`, `ticket_connection_error`, `ticket_api_error`.
+
+### `ticket_get_issue`
+
+| Field | Type | Required | Default | Description |
+|---|---:|---:|---:|---|
+| `ticket_id` | `string` | Yes | N/A | `ENG-123` / `PROJ-456`, a Linear issue UUID, or a numeric Jira id. Keys are upper-cased. |
+| `provider` | `"linear"` or `"jira"` | No | `TICKET_PROVIDER` | Needed only when both are configured. |
+| `include_comments` | `boolean` | No | `false` | Also return up to `TICKET_MAX_RESULTS` comments. |
+
+```json
+{
+  "ok": true,
+  "data": {
+    "provider": "jira", "id": "10001", "key": "SUP-7", "title": "Checkout broken",
+    "description": "Customer [REDACTED_EMAIL] can't pay for order 88213",
+    "status": "Open", "url": "https://acme.atlassian.net/browse/SUP-7",
+    "created_at": "2026-11-01T10:00:00.000+0000", "updated_at": "2026-11-02T10:00:00.000+0000",
+    "assignee": {"display_name": "Ravi", "account_id": "acc-1"}, "reporter": null,
+    "priority": "High", "labels": ["checkout"], "project": "SUP", "issue_type": "Bug",
+    "comments": [{"id": "9", "author": {"display_name": "Ravi", "account_id": "acc-1"},
+                  "body": "Started after 14:30 deploy", "created_at": "...", "updated_at": "..."}]
+  },
+  "meta": {"provider": "jira", "content_trust": "untrusted_user_content", "comments_returned": 1,
+           "comments_total": 1, "comments_has_more": false, "truncated": false}
+}
+```
+
+### `ticket_search_issues`
+
+| Field | Type | Required | Default | Description |
+|---|---:|---:|---:|---|
+| `query` | `string` | One of | N/A | Plain text, max 200 chars. Jira: becomes `text ~ "<escaped>"`. |
+| `jql` | `string` | One of | N/A | Jira only, max 1000 chars. `ORDER BY updated DESC` is added unless the JQL orders. |
+| `provider` | `"linear"` or `"jira"` | No | `TICKET_PROVIDER` | |
+| `limit` | `integer` | No | `20` | Clamped at `TICKET_MAX_RESULTS` (`meta.limit_clamped`). |
+
+Returns `data.tickets[]` (`key`, `title`, `status`, `url`, `updated_at`, `assignee`) and a `note`
+when nothing matched. Linear uses `searchIssues`; Jira uses `/rest/api/3/search/jql`.
+
+### `ticket_list_comments`
+
+| Field | Type | Required | Default | Description |
+|---|---:|---:|---:|---|
+| `ticket_id` | `string` | Yes | N/A | As for `ticket_get_issue`. |
+| `provider` | `"linear"` or `"jira"` | No | `TICKET_PROVIDER` | |
+| `limit` | `integer` | No | `TICKET_MAX_RESULTS` | Clamped at `TICKET_MAX_RESULTS`. |
+
+Returns `data.comments[]` oldest first; `meta.comments_total` (Jira only) and `meta.comments_has_more`.
+
 ## MCP Resources
 
 Resources are read-only context. They are not tools.
@@ -865,7 +930,7 @@ Time windows are text such as `"2h"`, `"24h"` or an ISO 8601 interval
 
 | Prompt | Arguments | Use it for |
 |---|---|---|
-| `investigate_incident` | `ticket_text` (required), `time_window` = `"24h"`, `store_or_domain` | A support ticket end to end: resolve ids, DB state, `trace_request`, error patterns, then a report with timeline, verified facts vs hypotheses, root cause and a customer reply draft. |
+| `investigate_incident` | `ticket_text` or `ticket_id` (+ `provider` when both Linear and Jira are configured), `time_window` = `"24h"`, `store_or_domain` | A support ticket end to end: resolve ids, DB state, `trace_request`, error patterns, then a report with timeline, verified facts vs hypotheses, root cause and a customer reply draft. |
 | `trace_user_journey` | `identifier` (required), `id_type` = `"auto"`, `time_window` = `"24h"` | One order/user/request id across all sources, as a `Timestamp \| Source \| Service / table \| Action or state \| Status \| Details` table plus anomalies. `id_type` becomes `trace_request`'s `db_id_type`. |
 | `slow_endpoint_rca` | `endpoint_or_transaction` (required), `time_window` = `"4h"`, `threshold_ms` = `1000` | Latency for an HTTP path or New Relic transaction: percentiles, DB vs external time, slow statements (`db_explain_query`), RDS/ECS saturation, remedies. |
 

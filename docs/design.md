@@ -167,6 +167,22 @@ There is **no application-level table allowlist**. Any table the dedicated read-
 | `nr_describe_log_fields` | `event_type: str = "Log"`, `hours: int = 1` | `keyset()` fields + likely trace/correlation-id attributes | Grounding tool; guessing NR attribute names is the #1 cause of empty results |
 | `nr_run_nrql_query` | `query: str`, `limit: int = 100` | rows, executed query, NerdGraph metadata | **Validated** — see §6.3. `LIMIT` injected/clamped; `SINCE`/`UNTIL` window capped. |
 
+### 4.3b Ticket Tools (Linear / Jira Cloud)
+
+| Tool | Arguments | Returns | Notes |
+|---|---|---|---|
+| `ticket_get_issue` | `ticket_id`, `provider?`, `include_comments: bool = False` | normalized ticket (title, description, status, people, url, timestamps), optional comments | Read-only. Jira ADF flattened to text. |
+| `ticket_search_issues` | `query?` or `jql?` (Jira only), `provider?`, `limit: int = 20` | ticket hits | Text is escaped into `text ~ "..."` for Jira; JQL is length-capped. |
+| `ticket_list_comments` | `ticket_id`, `provider?`, `limit?` | comments, oldest first | |
+
+`TicketService` depends on one `TicketProvider` Protocol (`service/ports.py`), implemented by
+`LinearClient` and `JiraClient` in `integrations/tickets/`, so the service never branches on the
+provider. `TICKET_PROVIDER=auto` uses the one configured provider; with both, the call must pass
+`provider` (ids such as `ENG-123` look the same in both). Responses are never cached (tickets
+change constantly). See §6.3a for the security model. Status changes are planned as the only write,
+behind an opt-in flag and per-call user approval (`docs/plan/ticket-systems-linear-jira.md`); they
+are **not** implemented.
+
 ### 4.3a Cross-Source Tools
 
 | Tool | Arguments | Returns | Notes |
@@ -206,7 +222,7 @@ the workflow steps.
 
 | Prompt | Arguments | Workflow |
 |---|---|---|
-| `investigate_incident` | `ticket_text`, `time_window` = `"24h"`, `store_or_domain` | Extract ids → `db_resolve_store` / `db_search_by_identifier` → DB state → `trace_request` (with `db_id_type`) → error patterns and metrics → structured incident report |
+| `investigate_incident` | `ticket_text` or `ticket_id` (+ `provider`), `time_window` = `"24h"`, `store_or_domain` | Load the ticket with `ticket_get_issue` when given an id → extract ids → `db_resolve_store` / `db_search_by_identifier` → DB state → `trace_request` (with `db_id_type`) → error patterns and metrics → structured incident report |
 | `trace_user_journey` | `identifier`, `id_type` = `"auto"`, `time_window` = `"24h"` | `trace_request` → fix empty sources with the describe tools → timeline (DB rows checked via `in_window`) → anomalies → journey table |
 | `slow_endpoint_rca` | `endpoint_or_transaction`, `time_window` = `"4h"`, `threshold_ms` = `1000` | NRQL `Transaction` percentiles and DB/external breakdown → datastore spans + `db_explain_query` → `cw_get_metric_stats` with user-supplied dimensions → remedies |
 
@@ -301,6 +317,23 @@ NRQL has no AST parser comparable to sqlglot, so the guardrail is regex-based (`
 
 This is a first line of defence, not as rigorous as the SQL guardrail. It is good enough because the NerdGraph `nrql` field itself only accepts queries, not mutations (alert creation etc. go through other GraphQL operations). Credentials: `NEW_RELIC_API_KEY` (user key, `NRAK-...`) + `NEW_RELIC_ACCOUNT_ID`; region `us` or `eu` selects the GraphQL endpoint.
 
+### 6.3a Ticket Systems
+
+- **Read-only.** The Linear client sends only GraphQL queries (no mutations); the Jira client
+  calls only `GET /issue`, `GET /issue/{key}/comment` and `POST /search/jql` (a read).
+- **Input checks before any I/O** (`integrations/tickets/guardrail.py`): ticket ids must be
+  `KEY-123`, a Linear UUID or a numeric Jira id; search text max 200 chars, control characters
+  removed, escaped into the JQL string; raw JQL is Jira-only, max 1000 chars, no control characters.
+- **No user-chosen hosts.** `JIRA_BASE_URL` comes from settings only and must be `https://`.
+- **Output.** People are reduced to display name + account id (no email); text is redacted with
+  the same `PII_REDACTION` rules as other sources, then truncated; error details are redacted.
+- **Prompt injection.** Ticket text is customer-written. Every response sets
+  `meta.content_trust: "untrusted_user_content"` and the tool docstrings and
+  `investigate_incident` tell the model to treat it as evidence, not instructions.
+- **Credentials.** `LINEAR_API_KEY` and `JIRA_API_TOKEN` carry the user's full permissions,
+  including writes the server never uses; prefer a dedicated least-privilege service account.
+  `doctor`'s error sanitizer masks both, plus the Jira Basic-auth form.
+
 ### 6.4 Data Protection
 
 - **PII redaction** in the response path (`core/redaction.py`), applied at the tool/service boundary, not deeper in the stack: column-name masking (`PII_COLUMN_NAMES`) plus regex patterns (email / card / Aadhaar / PAN / phone) applied to both DB/NRQL row values and raw log message text. UUIDs and Unix epoch timestamps (10-digit seconds / 13-digit millis starting with `1`) are protected from the card/phone/Aadhaar patterns so they are not redacted. Toggle: `PII_REDACTION` (default on).
@@ -368,6 +401,17 @@ NEW_RELIC_REGION=us
 NR_MAX_WINDOW_HOURS=168
 NR_DEFAULT_WINDOW_HOURS=24
 NR_MAX_ROWS=500
+
+# Tickets (Linear and/or Jira Cloud) — read-only ticket_* tools
+TICKET_PROVIDER=auto          # linear | jira | auto (the one configured)
+LINEAR_API_KEY=
+JIRA_BASE_URL=                # https:// only
+JIRA_EMAIL=
+JIRA_API_TOKEN=
+TICKET_MAX_RESULTS=50
+TICKET_MAX_RESPONSE_BYTES=1000000
+TICKET_MAX_DESCRIPTION_BYTES=32768
+TICKET_HTTP_TIMEOUT_S=15
 
 # Server
 SERVER_HOST=127.0.0.1
@@ -456,6 +500,7 @@ Weekly review of tool usage and guardrail rejections to improve the cookbook rem
 | **4b** | stdio transport, PyPI package `opsinsight-mcp` (uvx), GHCR image, tag-triggered publishing | **Done** (0.1.0) |
 | **5a** | Cross-source `trace_request` (CloudWatch + New Relic + DB merged timeline) | **Done** |
 | **5b** | MCP prompts `investigate_incident`, `trace_user_journey`, `slow_endpoint_rca` (§4.6) | **Done** |
+| **5c** | Linear / Jira read tools, `investigate_incident` by `ticket_id` (§4.3b) | **Done** (status change: planned) |
 | **5** | `investigation_start`, shared-deployment auth, dashboards | **Not started** |
 
 ## 11. Risks
@@ -503,12 +548,13 @@ src/opsinsight/
     redaction.py            # PII masking
     logging_config.py
     cache.py                # TTL cache for schema/catalog lookups
-  tools/{database,cloudwatch,newrelic}/   # one file per @mcp.tool()
+  tools/{database,cloudwatch,newrelic,tickets,trace}/   # one file per @mcp.tool()
   service/                  # one service per source + TraceService, ports.py, trace_sources.py
   integrations/
     database/{engine,guardrail,introspect}.py
     cloudwatch/{client,guardrail}.py
     newrelic/{client,guardrail}.py
+    tickets/{guardrail,linear_client,jira_client,adf,models}.py
   resources/{schema,logs,cookbook}.py
   data/query_cookbook.yaml
 ```

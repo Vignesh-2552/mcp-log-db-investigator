@@ -10,7 +10,7 @@
 ![Read-only](https://img.shields.io/badge/access-read--only-brightgreen)
 ![MCP](https://img.shields.io/badge/protocol-MCP-orange)
 
-<h3>A <a href="https://gofastmcp.com">FastMCP</a> server exposing safe, read-only tools for investigating support tickets across PostgreSQL, AWS CloudWatch, and New Relic.</h3>
+<h3>A <a href="https://gofastmcp.com">FastMCP</a> server exposing safe, read-only tools for investigating support tickets across PostgreSQL, AWS CloudWatch, and New Relic, with tickets loaded from Linear or Jira.</h3>
 
 <div class="toc">
   <a href="#overview">Overview</a> •
@@ -43,6 +43,9 @@ Features include:
   statistics.
 - 🟢 **New Relic** — event type and log field discovery (`keyset()`),
   correlation-id detection, and validated NRQL execution.
+- 🎫 **Linear / Jira** — load a ticket's description, status and comments by id
+  (or search for it), PII-redacted, so `/investigate_incident` can start from
+  `ENG-123` instead of pasted text. Read-only.
 - 🛡️ **Guardrails, not trust** — every query is AST-parsed (SQL) or
   pattern-validated (NRQL/CloudWatch) before it touches the network; results
   are PII-redacted before they're returned.
@@ -146,12 +149,23 @@ Leave out the variables for sources you don't use.
         "CLOUDWATCH_SECRET_ACCESS_KEY": "...",
         "CLOUDWATCH_ALLOWED_LOG_GROUP": "/app/prod",
         "NEW_RELIC_API_KEY": "NRAK-...",
-        "NEW_RELIC_ACCOUNT_ID": "..."
+        "NEW_RELIC_ACCOUNT_ID": "...",
+        "LINEAR_API_KEY": "lin_api_...",
+        "JIRA_BASE_URL": "https://your-org.atlassian.net",
+        "JIRA_EMAIL": "bot@your-org.com",
+        "JIRA_API_TOKEN": "..."
       }
     }
   }
 }
 ```
+
+The `LINEAR_*` / `JIRA_*` variables enable the `ticket_*` tools. These are **unreleased**:
+0.3.1 ignores them, so use the GitHub `main` form from Step 2 until the next release.
+Configure Linear, Jira, or both; with both, also set `"TICKET_PROVIDER": "linear"` (or
+`"jira"`), or each ticket call must name the provider. Get a Linear key under
+*Settings → Security & access → Personal API keys*, and a Jira token at
+<https://id.atlassian.com/manage-profile/security/api-tokens>.
 
 **Claude Code**: one command. Add one `-e` for each variable you need, and use
 `--scope user` to make it available in every project:
@@ -166,7 +180,8 @@ Any tuning variable from `.env.example` can also go in `env`, for example
 #### Step 5: Restart the client and test it
 
 1. Fully quit and reopen Claude Desktop or Cursor; closing the window isn't enough.
-2. Check that the `investigation` server shows **17 tools** (`db_*`, `cw_*`, `nr_*`, `trace_request`).
+2. Check that the `investigation` server shows **17 tools** on 0.3.1 (`db_*`, `cw_*`, `nr_*`,
+   `trace_request`), or **20** on unreleased versions (plus `ticket_*`).
 3. Ask a simple question, such as *"List the database tables"* (which calls
    `db_list_tables`) or *"Which CloudWatch log groups can you read?"*.
 
@@ -308,6 +323,8 @@ What differs from the local (`uv run`) path:
 | **PostgreSQL** (`db_*` tools) | `DB_URL` | Full connection string, `asyncpg` driver: `postgresql+asyncpg://user:pass@host:5432/dbname`. Point this at a read-only role/replica — see [Security Model](#security-model). |
 | **AWS CloudWatch** (`cw_*` tools) | `CLOUDWATCH_REGION` + one of (`AWS_PROFILE`) or (`CLOUDWATCH_ACCESS_KEY_ID` + `CLOUDWATCH_SECRET_ACCESS_KEY`) + `CLOUDWATCH_ALLOWED_LOG_GROUP` | `CLOUDWATCH_REGION` has no `AWS_REGION` fallback — it must be set explicitly. `CLOUDWATCH_ALLOWED_LOG_GROUP` is a comma-separated allowlist; leaving it unset means no log group is queryable. |
 | **New Relic** (`nr_*` tools) | `NEW_RELIC_API_KEY` + `NEW_RELIC_ACCOUNT_ID` | The API key must be a **User API key** (`NRAK-...`), not an ingest/license key. `NEW_RELIC_REGION` defaults to `us`; set it to `eu` for EU-region accounts. |
+| **Linear** (`ticket_*` tools) | `LINEAR_API_KEY` | Personal API key. With Jira also configured, set `TICKET_PROVIDER` or pass `provider` per call. |
+| **Jira Cloud** (`ticket_*` tools) | `JIRA_BASE_URL` + `JIRA_EMAIL` + `JIRA_API_TOKEN` | `JIRA_BASE_URL` must be `https://`. Jira Server / Data Center isn't supported yet. |
 
 See `.env.example` for every available variable, including tuning knobs
 (row limits, time-window caps, timeouts) that all ship with working defaults.
@@ -400,6 +417,9 @@ tool update guidance, see [`docs/tool-reference.md`](docs/tool-reference.md).
 | `nr_list_event_types` | `SHOW EVENT TYPES` — enumerates event types with data (`Log`, `Transaction`, `Span`, `Metric`, custom types); run before `nr_describe_log_fields` if the event type is unknown. |
 | `nr_describe_log_fields` | `keyset()` of a New Relic event type (default `Log`), flags likely trace/correlation id attributes; run before writing NRQL. |
 | `nr_run_nrql_query` | Validated, read-only NRQL execution against New Relic (Log/Metric/event data). |
+| `ticket_get_issue` | One Linear/Jira ticket by id: title, description, status, people, optional comments. PII-redacted. |
+| `ticket_search_issues` | Find tickets by text (or Jira JQL) when you don't have the id. |
+| `ticket_list_comments` | Comments on one ticket, oldest first. |
 
 Resources: `schema://db/tables`, `schema://db/table/{name}`, `logs://groups`,
 `docs://query-cookbook`.
@@ -411,7 +431,8 @@ network I/O: SQL is parsed with `sqlglot` and rejected unless it's a single
 `SELECT`/`WITH...SELECT` with no dangerous functions; CloudWatch calls are
 checked against a log-group allowlist, a time-window cap, and a bytes-scanned
 cost ceiling; NRQL is restricted to a single `SELECT` with no write-ish
-keywords and a clamped `LIMIT`. Results and any log messages are redacted
+keywords and a clamped `LIMIT`; ticket ids, search text and JQL are validated
+and only read endpoints are called. Results and any log messages are redacted
 (PII and credentials) before returning. Over HTTP, a bearer token
 (`MCP_AUTH_TOKEN`) and strict Host/Origin checks guard the endpoint, and every
 tool call and resource read is written as a structured audit event to the

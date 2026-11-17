@@ -40,3 +40,7 @@ class CWGuardrailError(ToolError):
 
 class NewRelicGuardrailError(ToolError):
     """Raised by the New Relic NRQL guardrail layer (newrelic/guardrail.py)."""
+
+
+class TicketGuardrailError(ToolError):
+    """Raised by the ticket guardrail layer (integrations/tickets/guardrail.py)."""

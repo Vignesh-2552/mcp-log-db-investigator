@@ -63,6 +63,20 @@ class Settings(BaseSettings):
     # Cap on the serialized size of rows one NRQL call returns.
     nr_max_response_bytes: int = Field(1_000_000, ge=1)
 
+    # Ticket systems (Linear / Jira Cloud). Read tools only in this release.
+    # auto: whichever one provider is configured; both or neither -> error
+    # unless the call passes `provider`.
+    ticket_provider: Literal["linear", "jira", "auto"] = "auto"
+    linear_api_key: SecretStr | None = None
+    jira_base_url: str | None = None
+    jira_email: str | None = None
+    jira_api_token: SecretStr | None = None
+    ticket_max_results: int = Field(50, ge=1, le=100)
+    ticket_max_response_bytes: int = Field(1_000_000, ge=1)
+    # Per-field cap for a ticket description or one comment body.
+    ticket_max_description_bytes: int = Field(32_768, ge=256)
+    ticket_http_timeout_s: float = Field(15.0, gt=0)
+
     # trace_request (cross-source timeline). Every field can also be passed per
     # call; these are the defaults. A source with nothing configured is skipped.
     # Log groups to search; empty -> every group in CLOUDWATCH_ALLOWED_LOG_GROUP.
@@ -140,6 +154,17 @@ class Settings(BaseSettings):
     def _redis_backend_needs_url(self) -> "Settings":
         if self.cache_backend == "redis" and self.redis_url is None:
             raise ValueError("CACHE_BACKEND=redis requires REDIS_URL.")
+        return self
+
+    @model_validator(mode="after")
+    def _jira_base_url_is_https(self) -> "Settings":
+        # Settings-only (no tool takes a URL), and https so the Basic-auth
+        # token never crosses the wire in clear text.
+        if self.jira_base_url:
+            url = self.jira_base_url.strip().rstrip("/")
+            if not url.lower().startswith("https://") or len(url) <= len("https://"):
+                raise ValueError("JIRA_BASE_URL must be an https:// URL, e.g. https://your-org.atlassian.net")
+            self.jira_base_url = url
         return self
 
     @model_validator(mode="after")
@@ -226,6 +251,19 @@ class Settings(BaseSettings):
     def db_historical_schema_prefixes_set(self) -> frozenset[str]:
         return frozenset(
             item.strip() for item in self.db_historical_schema_prefixes.split(",") if item.strip()
+        )
+
+    @property
+    def linear_configured(self) -> bool:
+        return bool(self.linear_api_key and self.linear_api_key.get_secret_value())
+
+    @property
+    def jira_configured(self) -> bool:
+        return bool(
+            self.jira_base_url
+            and self.jira_email
+            and self.jira_api_token
+            and self.jira_api_token.get_secret_value()
         )
 
     @property

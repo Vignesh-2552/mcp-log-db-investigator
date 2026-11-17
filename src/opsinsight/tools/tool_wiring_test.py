@@ -48,6 +48,7 @@ def services(monkeypatch: pytest.MonkeyPatch):
         "cloudwatch_metrics_service": _Recorder(is_async=False),
         "newrelic_service": _Recorder(is_async=True),
         "trace_service": _Recorder(is_async=True),
+        "ticket_service": _Recorder(is_async=True),
     }
     monkeypatch.setattr(container_module, "_container", Container(**fakes))
     yield fakes
@@ -90,6 +91,12 @@ CASES = [
      "trace_request", ("r1",),
      {"start": None, "end": None, "sources": ["db"], "cw_log_groups": None, "cw_field": None,
       "nr_event_type": None, "nr_field": None, "db_id_type": "order_id", "limit": 200}),
+    ("ticket_get_issue", {"ticket_id": "ENG-1", "provider": "linear", "include_comments": True},
+     "ticket_service", "get_ticket", ("ENG-1", "linear", True), {}),
+    ("ticket_search_issues", {"query": "checkout", "limit": 5}, "ticket_service", "search_tickets",
+     ("checkout", None, 5, None), {}),
+    ("ticket_list_comments", {"ticket_id": "PROJ-2", "provider": "jira", "limit": 3}, "ticket_service",
+     "list_comments", ("PROJ-2", "jira", 3), {}),
 ]
 
 
