@@ -63,8 +63,8 @@ exclude = ["**/__pycache__", "**/*.pyc", "**/*_test.py", "**/conftest.py"]
 include = ["src/opsinsight", "README.md", "LICENSE", "CHANGELOG.md"]
 
 [tool.pytest.ini_options]
-# Each test file sits next to the module it tests: foo.py -> foo_test.py.
-testpaths = ["src"]
+# Tests are centralised under src/opsinsight/tests/.
+testpaths = ["src/opsinsight/tests"]
 python_files = ["*_test.py"]
 markers = [
     "integration: requires external services (e.g. docker-compose Postgres)",
