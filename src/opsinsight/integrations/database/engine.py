@@ -1,4 +1,5 @@
-from sqlalchemy import event
+from typing import Any
+
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
@@ -13,34 +14,24 @@ logger = get_logger("database.engine")
 _engines: dict[tuple[str, int, int], AsyncEngine] = {}
 
 
-def _harden_session(engine: AsyncEngine, settings: Settings) -> None:
-    """Session hardening: read-only, statement timeout,
-    idle-in-transaction timeout — applied on every new physical connection.
-    This is defense in depth; the DB role is the last line of defence,
-    not this application layer.
+def session_hardening_connect_args(settings: Settings) -> dict[str, Any]:
+    """Session hardening: read-only, statement timeout, idle-in-transaction
+    timeout. Defense in depth; the DB role is the last line of defence.
 
-    SQLAlchemy's asyncpg dialect exposes a DBAPI-style sync `cursor()` on
-    the pool "connect" event even though the underlying driver is async
-    (via greenlet trampolining), so this listener works the same way it
-    would for a sync driver.
+    Sent as asyncpg `server_settings`, i.e. in the connection's startup
+    packet, so they become the session defaults. They must not be applied
+    with `SET` from a pool "connect" listener: SQLAlchemy's asyncpg adapter
+    runs that `SET` inside its implicit transaction, and the rollback at the
+    end of the first checkout reverts it, leaving every later checkout of
+    that pooled connection with no timeout and read-write defaults.
     """
-
-    @event.listens_for(engine.sync_engine, "connect")
-    def _on_connect(dbapi_conn, _connection_record) -> None:
-        cursor = dbapi_conn.cursor()
-        try:
-            cursor.execute("SET default_transaction_read_only = on")
-            cursor.execute(f"SET statement_timeout = '{settings.db_statement_timeout_ms}ms'")
-            cursor.execute(
-                f"SET idle_in_transaction_session_timeout = '{settings.db_idle_txn_timeout_ms}ms'"
-            )
-            logger.debug(
-                "Applied DB session hardening (read_only=on, statement_timeout=%dms, idle_txn_timeout=%dms)",
-                settings.db_statement_timeout_ms,
-                settings.db_idle_txn_timeout_ms,
-            )
-        finally:
-            cursor.close()
+    return {
+        "server_settings": {
+            "default_transaction_read_only": "on",
+            "statement_timeout": f"{settings.db_statement_timeout_ms}ms",
+            "idle_in_transaction_session_timeout": f"{settings.db_idle_txn_timeout_ms}ms",
+        }
+    }
 
 
 def get_engine(settings: Settings | None = None) -> AsyncEngine:
@@ -49,11 +40,16 @@ def get_engine(settings: Settings | None = None) -> AsyncEngine:
     engine = _engines.get(key)
     if engine is None:
         logger.info(
-            "Initializing DB engine for DSN: %s",
+            "Initializing DB engine for DSN: %s (read_only=on, statement_timeout=%dms, idle_txn_timeout=%dms)",
             make_url(settings.db_dsn).render_as_string(hide_password=True),
+            settings.db_statement_timeout_ms,
+            settings.db_idle_txn_timeout_ms,
         )
-        engine = create_async_engine(settings.db_dsn, pool_pre_ping=True)
-        _harden_session(engine, settings)
+        engine = create_async_engine(
+            settings.db_dsn,
+            pool_pre_ping=True,
+            connect_args=session_hardening_connect_args(settings),
+        )
         _engines[key] = engine
     return engine
 

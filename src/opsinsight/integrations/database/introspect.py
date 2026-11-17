@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from opsinsight.core.cache import ttl_cache
 from opsinsight.core.config import Settings, get_settings
 from opsinsight.core.errors import GuardrailError
+from opsinsight.core.limits import json_safe, rows_from_result
 from opsinsight.core.logging_config import get_logger
 from opsinsight.core.redaction import redact_rows
 from opsinsight.integrations.database.constants import (
@@ -163,8 +164,7 @@ async def sample_rows(table: str, limit: int, settings: Settings | None = None) 
         result = await conn.execute(
             text(build_sample_rows_sql(schema, name)), {"limit": clamped_limit}
         )
-        columns = list(result.keys())
-        rows = [dict(zip(columns, row)) for row in result.fetchall()]
+        columns, rows = rows_from_result(list(result.keys()), result.fetchall())
     rows = redact_rows(rows, settings)
     return SampleRowsResult(table=qualified, columns=columns, rows=rows, row_count=len(rows))
 
@@ -285,19 +285,23 @@ async def search_by_identifier(
     # must not get pushed out by the MAX_SEARCH_TARGETS cap. Within each
     # rank, live-schema tables sort ahead of historical/migration-snapshot
     # ones so a plain alphabetical schema-name ordering (e.g. "migration" <
-    # "public") can't starve live tables out of the cap below.
-    ranked: list[tuple[int, bool, str, str, str]] = []  # (rank, is_historical, schema, table, column)
+    # "public") can't starve live tables out of the cap below. Among column
+    # matches, tables named after the entity (`order_payment` for
+    # "order_id") sort before unrelated ones (`fulfillment_history`).
+    entity = id_type.removesuffix("_id").lower()
+    ranked: list[tuple[int, bool, bool, str, str, str]] = []
     seen: set[tuple[str, str, str]] = set()
     for schema, table, pk_column in entity_matches:
         key = (schema, table, pk_column)
         if key not in seen:
             seen.add(key)
-            ranked.append((0, _is_historical_schema(schema, historical_prefixes), schema, table, pk_column))
+            ranked.append((0, _is_historical_schema(schema, historical_prefixes), False, schema, table, pk_column))
     for schema, table in column_matches:
         key = (schema, table, id_type)
         if key not in seen:
             seen.add(key)
-            ranked.append((1, _is_historical_schema(schema, historical_prefixes), schema, table, id_type))
+            unrelated = not (entity and table.lower().startswith(entity))
+            ranked.append((1, _is_historical_schema(schema, historical_prefixes), unrelated, schema, table, id_type))
 
     if not ranked:
         raise GuardrailError(
@@ -306,8 +310,8 @@ async def search_by_identifier(
             detail="Try db_list_tables or db_describe_table to find the right column name.",
         )
 
-    ranked.sort(key=lambda r: r[:4])
-    targets: list[tuple[str, str, str]] = [(s, t, c) for _, _, s, t, c in ranked]
+    ranked.sort(key=lambda r: r[:5])
+    targets: list[tuple[str, str, str]] = [(s, t, c) for _, _, _, s, t, c in ranked]
 
     truncated = len(targets) > MAX_SEARCH_TARGETS
     targets = targets[:MAX_SEARCH_TARGETS]
@@ -332,8 +336,7 @@ async def search_by_identifier(
             executable_sql = f"{raw_sql} LIMIT {validated.limit}"
             async with engine.connect() as conn:
                 result = await conn.execute(text(executable_sql), {"identifier": identifier})
-                columns = list(result.keys())
-                rows = [dict(zip(columns, row)) for row in result.fetchall()]
+                _, rows = rows_from_result(list(result.keys()), result.fetchall())
         except DataError as e:
             # The identifier's literal shape doesn't fit this column's SQL
             # type (e.g. a non-UUID string against a uuid PK) — since
@@ -429,6 +432,12 @@ async def search_by_identifier(
 # picking one.
 
 
+def escape_like(value: str) -> str:
+    r"""Makes `%`, `_` and `\` literal in an ILIKE pattern (backslash is
+    Postgres' default LIKE escape), so input like `%` can't match every row."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def _domain_search_variants(name_or_domain: str) -> list[str]:
     """'olallawines.com' -> ['olallawines.com', 'olallawines'] so a bare-
     hostname-stored value (no TLD) still matches. Doesn't attempt display-name
@@ -481,10 +490,10 @@ async def resolve_store(name_or_domain: str, settings: Settings | None = None) -
             seen_keys: set[tuple[str, ...]] = set()
             async with engine.connect() as conn:
                 for variant in variants:
-                    result = await conn.execute(text(executable_sql), {"pattern": f"%{variant}%"})
+                    result = await conn.execute(text(executable_sql), {"pattern": f"%{escape_like(variant)}%"})
                     cols = list(result.keys())
                     for row in result.fetchall():
-                        row_dict = dict(zip(cols, row))
+                        row_dict = {k: json_safe(v) for k, v in zip(cols, row, strict=False)}
                         key = tuple(str(v) for v in row_dict.values())
                         if key not in seen_keys:
                             seen_keys.add(key)

@@ -6,7 +6,8 @@ import httpx
 from opsinsight.core.config import Settings
 from opsinsight.core.errors import ToolError
 from opsinsight.core.field_heuristics import CORRELATION_ID_RE as _CORRELATION_ID_RE
-from opsinsight.core.redaction import redact_rows
+from opsinsight.core.limits import fit_rows_to_budget
+from opsinsight.core.redaction import redact_rows, redact_text
 from opsinsight.integrations.newrelic.client import run_nrql
 from opsinsight.integrations.newrelic.constants import EVENT_TYPE_RE
 from opsinsight.integrations.newrelic.guardrail import (
@@ -49,10 +50,10 @@ class NewRelicService(BaseService):
             return ToolError(
                 rule="newrelic_http_error",
                 message=f"New Relic API returned HTTP {e.response.status_code}.",
-                detail=e.response.text[:500],
+                detail=redact_text(e.response.text[:500]),
             ).to_response()
         return ToolError(
-            rule="newrelic_connection_error", message="Could not reach New Relic API.", detail=str(e)
+            rule="newrelic_connection_error", message="Could not reach New Relic API.", detail=redact_text(str(e))
         ).to_response()
 
     async def describe_log_fields(self, event_type: str = "Log", hours: int = 1) -> dict:
@@ -132,6 +133,14 @@ class NewRelicService(BaseService):
         rows = result["results"]
         if rows and isinstance(rows[0], dict):
             rows = redact_rows(rows, settings)
+        fetched = len(rows)
+        rows, truncated, _ = fit_rows_to_budget(rows, settings.nr_max_response_bytes)
+        meta: dict = {"row_count": len(rows), "truncated": truncated}
+        if truncated:
+            meta["truncation_note"] = (
+                f"Response capped at {settings.nr_max_response_bytes} bytes: returned {len(rows)} of "
+                f"{fetched} rows. SELECT fewer attributes, aggregate (count/FACET), or narrow WHERE."
+            )
 
         result_model = NrqlQueryResult(
             executed_query=validated_query,
@@ -139,7 +148,7 @@ class NewRelicService(BaseService):
             row_count=len(rows),
             metadata=result["metadata"],
         )
-        return self.ok(result_model.to_dict(), {"row_count": len(rows)})
+        return self.ok(result_model.to_dict(), meta)
 
     @staticmethod
     def trace_query(event_type: str, field: str, value: str, since: datetime, until: datetime) -> str:

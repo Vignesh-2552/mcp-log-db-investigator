@@ -6,8 +6,10 @@ from sqlglot import exp
 
 from opsinsight.core.errors import GuardrailError
 from opsinsight.core.logging_config import get_logger
+from opsinsight.core.redaction import is_sensitive_key, redact_text
 from opsinsight.integrations.database.constants import (
     BLOCKED_NODES,
+    BLOCKED_TABLES,
     DANGEROUS_FUNCTION_PREFIXES,
     DANGEROUS_FUNCTIONS,
     DIALECT,
@@ -20,9 +22,13 @@ logger = get_logger("database.guardrail")
 def sqlalchemy_error_detail(e: SQLAlchemyError) -> str:
     """Best-effort extraction of the underlying driver error message —
     `.orig` is the raw DBAPI exception (e.g. asyncpg's), which is usually
-    more specific than SQLAlchemy's own wrapper message."""
+    more specific than SQLAlchemy's own wrapper message.
+
+    Redacted: Postgres echoes offending values in errors (e.g. `invalid input
+    syntax for type integer: "a@b.com"` from `SELECT email::int`), which
+    would otherwise bypass row redaction."""
     orig = getattr(e, "orig", None)
-    return str(orig) if orig is not None else str(e)
+    return redact_text(str(orig) if orig is not None else str(e))
 
 
 @dataclass
@@ -52,6 +58,62 @@ def _function_name(node: exp.Func) -> str:
 
 def _is_dangerous_function(name: str) -> bool:
     return name in DANGEROUS_FUNCTIONS or name.startswith(DANGEROUS_FUNCTION_PREFIXES)
+
+
+def _projection_of(node: exp.Expression) -> exp.Expression | None:
+    """The select-list item `node` sits in, or None if it is outside every
+    select list (WHERE, JOIN, ORDER BY, ...)."""
+    current = node
+    while current.parent is not None:
+        if isinstance(current.parent, exp.Select) and current.arg_key == "expressions":
+            return current
+        current = current.parent
+    return None
+
+
+def _inside(node: exp.Expression, stop: exp.Expression, kinds: tuple[type, ...]) -> bool:
+    current = node
+    while current is not None and current is not stop:
+        if isinstance(current, kinds):
+            return True
+        current = current.parent
+    return False
+
+
+def _check_projection_redaction(tree: exp.Expression) -> None:
+    """Redaction masks values by *output column name*, so a sensitive column
+    must not reach the result under a name that doesn't look sensitive:
+    `password_hash AS x`, `upper(token)`, a UNION branch (positional names),
+    a derived table/CTE with a column-alias list, or a whole-row value
+    (`SELECT u FROM users u`, `row_to_json(u)`), whose fields can't be
+    masked individually. Selecting the column under its own (or another
+    sensitive-looking) name is fine: it comes back masked."""
+    table_names = {t.alias_or_name.lower() for t in tree.find_all(exp.Table)}
+    renames_columns = any(a.columns for a in tree.find_all(exp.TableAlias))
+    has_set_operation = any(True for _ in tree.find_all(exp.SetOperation))
+
+    for column in tree.find_all(exp.Column):
+        projection = _projection_of(column)
+        if projection is None:
+            continue
+        name = column.name.lower()
+        if not column.table and name in table_names:
+            raise GuardrailError(
+                rule="whole_row_reference",
+                message=f"Whole-row reference to {column.name!r} is not allowed.",
+                detail="Row values can't be PII-masked field by field. Select the columns you need "
+                "(or `alias.*`) instead.",
+            )
+        if not is_sensitive_key(name) or _inside(column, projection, (exp.Count,)):
+            continue
+        if has_set_operation or renames_columns or not is_sensitive_key(projection.alias_or_name):
+            raise GuardrailError(
+                rule="sensitive_column_renamed",
+                message=f"Sensitive column {column.name!r} would be returned under another name.",
+                detail="Values are masked by column name. Select it under its own name (it comes back "
+                "masked), use COUNT(...), filter on it in WHERE, or leave it out. It can't be "
+                "aliased, wrapped in an expression, or projected through UNION or a column-alias list.",
+            )
 
 
 def clamp_and_inject_limit(
@@ -95,7 +157,10 @@ def validate_sql(
             message=f"SQL is {len(sql)} characters; the maximum is {MAX_SQL_CHARS}.",
         )
     try:
-        statements = [s for s in sqlglot.parse(sql, read=DIALECT) if s is not None]
+        # A trailing `; -- comment` parses as an extra Semicolon node; it isn't a statement.
+        statements = [
+            s for s in sqlglot.parse(sql, read=DIALECT) if s is not None and not isinstance(s, exp.Semicolon)
+        ]
     except Exception as e:
         logger.warning("SQL validation failed (rule=parse_error): %s", e)
         raise GuardrailError(rule="parse_error", message="Could not parse SQL.", detail=str(e)) from e
@@ -146,7 +211,17 @@ def validate_sql(
     for table in tree.find_all(exp.Table):
         if not table.db and table.name.lower() in cte_aliases:
             continue
+        if table.name.lower() in BLOCKED_TABLES:
+            logger.warning("SQL validation failed (rule=blocked_table): %s", table.name)
+            raise GuardrailError(
+                rule="blocked_table",
+                message=f"Blocked system table: {table.name}.",
+                detail="It exposes credentials, auth config or other sessions' unredacted query text.",
+                allowed=None,
+            )
         referenced_tables.append(_table_name(table))
+
+    _check_projection_redaction(tree)
 
     tree, limit = clamp_and_inject_limit(tree, max_rows, requested_limit)
 

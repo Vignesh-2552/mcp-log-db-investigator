@@ -9,7 +9,11 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from opsinsight.core.config import Settings
 from opsinsight.core.errors import ToolError
-from opsinsight.core.limits import fit_rows_to_budget, truncate_row_cells
+from opsinsight.core.limits import (
+    fit_rows_to_budget,
+    rows_from_result,
+    truncate_row_cells,
+)
 from opsinsight.core.logging_config import get_logger
 from opsinsight.core.redaction import redact_rows
 from opsinsight.integrations.database import introspect
@@ -160,20 +164,20 @@ class DatabaseService(BaseService):
                 started = time.perf_counter()
                 async with self._engine_factory(self.settings).connect() as conn:
                     result = await conn.execute(text(validated.sql))
-                    columns = list(result.keys())
-                    raw_rows = result.fetchall()
+                    columns, rows = rows_from_result(list(result.keys()), result.fetchall())
                 elapsed_ms = (time.perf_counter() - started) * 1000
-            logger.info("Executed db_run_query: %d rows returned in %.2f ms", len(raw_rows), elapsed_ms)
+            logger.info("Executed db_run_query: %d rows returned in %.2f ms", len(rows), elapsed_ms)
         except ToolError as e:
             return e.to_response()
         except SQLAlchemyError as e:
             return self._sqlalchemy_error_response(e)
 
-        rows = redact_rows([dict(zip(columns, row)) for row in raw_rows], self.settings)
+        fetched = len(rows)
+        rows = redact_rows(rows, self.settings)
         rows, truncated, _ = self._cap_rows(rows, self.settings.db_max_response_bytes)
         meta: dict = {"row_count": len(rows), "truncated": truncated}
         if truncated:
-            meta.update(self._truncation_meta(len(rows), len(raw_rows)))
+            meta.update(self._truncation_meta(len(rows), fetched))
         return self.ok(
             {
                 "rows": rows,
@@ -219,4 +223,14 @@ class DatabaseService(BaseService):
             return e.to_response()
         except SQLAlchemyError as e:
             return self._sqlalchemy_error_response(e)
-        return self.ok(result.to_dict(), {"candidate_count": len(result.candidates)})
+        # store_id/ambiguous were decided on every candidate; only the rows
+        # shown are capped, in match order, against the response budget.
+        fetched = len(result.candidates)
+        rows, truncated, _ = self._cap_rows([c.row for c in result.candidates], self.settings.db_max_response_bytes)
+        result.candidates = result.candidates[: len(rows)]
+        for candidate, row in zip(result.candidates, rows, strict=True):
+            candidate.row = row
+        meta: dict = {"candidate_count": fetched, "row_count": len(rows), "truncated": truncated}
+        if truncated:
+            meta.update(self._truncation_meta(len(rows), fetched))
+        return self.ok(result.to_dict(), meta)

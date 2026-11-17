@@ -166,7 +166,7 @@ Any tuning variable from `.env.example` can also go in `env`, for example
 #### Step 5: Restart the client and test it
 
 1. Fully quit and reopen Claude Desktop or Cursor; closing the window isn't enough.
-2. Check that the `investigation` server shows **16 tools** (`db_*`, `cw_*`, `nr_*`).
+2. Check that the `investigation` server shows **17 tools** (`db_*`, `cw_*`, `nr_*`, `trace_request`).
 3. Ask a simple question, such as *"List the database tables"* (which calls
    `db_list_tables`) or *"Which CloudWatch log groups can you read?"*.
 

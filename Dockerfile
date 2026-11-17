@@ -17,8 +17,9 @@ RUN uv sync --frozen --no-dev
 ENV PATH="/app/.venv/bin:$PATH"
 
 # Listen on all interfaces inside the container, on the port EXPOSEd below.
-# Publish it on loopback on the host (`-p 127.0.0.1:8000:8000`): the HTTP
-# transport has no built-in auth.
+# A non-loopback SERVER_HOST requires MCP_AUTH_TOKEN (bearer auth), or the
+# server refuses to start; still publish on loopback (`-p 127.0.0.1:8000:8000`)
+# unless the port must be reachable from other hosts.
 ENV SERVER_HOST=0.0.0.0 \
     SERVER_PORT=8000
 

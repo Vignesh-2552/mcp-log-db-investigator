@@ -277,3 +277,83 @@ def test_list_log_groups_with_no_allowlist_enumerates_nothing(monkeypatch: pytes
     assert result["ok"] is True
     assert result["data"]["log_groups"] == []
     assert result["data"]["note"]
+
+
+def test_query_still_running_after_polling_is_stopped(monkeypatch: pytest.MonkeyPatch):
+    """No tool can resume a query_id, so a query left running would keep
+    scanning past the bytes ceiling. It must be stopped, not handed back."""
+    monkeypatch.setenv("CW_POLL_MAX_WAIT_S", "0")
+    get_settings.cache_clear()
+    client = _FakeInsightsClient([], bytes_scanned=10, status="Running")
+    start, end = _window()
+
+    result = _service_with_logs_client(client).run_insights_query([LOG_GROUP], "fields @message", start, end, 10, False)
+
+    assert result["ok"] is True
+    assert result["data"]["status"] == "Stopped"
+    assert client.stopped is True
+
+
+class _GrowingScanClient(_FakeInsightsClient):
+    """Still running, scanning more bytes on every poll."""
+
+    def __init__(self):
+        super().__init__([], bytes_scanned=0, status="Running")
+        self.polls = 0
+
+    def get_query_results(self, queryId):
+        self.polls += 1
+        self.bytes_scanned = self.polls * 1000
+        return super().get_query_results(queryId)
+
+
+def test_bytes_ceiling_aborts_mid_poll(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("CW_MAX_BYTES_SCANNED", "1500")
+    monkeypatch.setenv("CW_POLL_MAX_WAIT_S", "600")
+    get_settings.cache_clear()
+    client = _GrowingScanClient()
+    service = _service_with_logs_client(client)
+    start, end = _window()
+    monkeypatch.setattr("opsinsight.service.cloudwatch_logs_service.time.sleep", lambda s: None)
+
+    result = service.run_insights_query([LOG_GROUP], "fields @message", start, end, 10, False)
+
+    assert result["error"]["rule"] == "bytes_scanned_ceiling_exceeded"
+    assert client.polls == 2  # stopped as soon as the ceiling was crossed, not after 600s
+    assert client.stopped is True
+
+
+def test_insights_rows_are_capped_to_response_budget(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("CW_MAX_RESPONSE_BYTES", "1000")
+    get_settings.cache_clear()
+    results = [[{"field": "@message", "value": "x" * 200}] for _ in range(50)]
+    start, end = _window()
+
+    result = _service_with_logs_client(_FakeInsightsClient(results, 100)).run_insights_query(
+        [LOG_GROUP], "fields @message", start, end, 100, False
+    )
+
+    assert 0 < result["meta"]["row_count"] < 50
+    assert result["meta"]["truncated"] is True
+
+
+class _PagedFilterClient:
+    """First page empty with a nextToken, as AWS returns while scanning streams."""
+
+    def __init__(self):
+        self.calls: list[dict] = []
+
+    def filter_log_events(self, **kwargs):
+        self.calls.append(kwargs)
+        if "nextToken" not in kwargs:
+            return {"events": [], "nextToken": "t1"}
+        return {"events": [{"timestamp": 1, "message": "boom", "logStreamName": "s"}]}
+
+
+def test_filter_events_follows_next_token_past_an_empty_page():
+    client = _PagedFilterClient()
+
+    result = _service_with_logs_client(client).filter_events(LOG_GROUP, "boom", 30)
+
+    assert result["data"]["event_count"] == 1
+    assert client.calls[1]["nextToken"] == "t1"

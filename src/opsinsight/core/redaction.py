@@ -7,7 +7,9 @@ from opsinsight.core.config import Settings, get_settings
 # Order matters: more specific patterns before more general ones.
 _PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("EMAIL", re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")),
-    ("CARD", re.compile(r"\b(?:\d[ -]?){13,19}\b")),
+    # Digit-to-digit, so a trailing separator isn't swallowed; Luhn-checked
+    # in redact_text so long numeric ids (snowflakes, epochs) aren't masked.
+    ("CARD", re.compile(r"\b\d(?:[ -]?\d){12,18}\b")),
     ("AADHAAR", re.compile(r"\b\d{4}\s?\d{4}\s?\d{4}\b")),
     ("PAN", re.compile(r"\b[A-Z]{5}\d{4}[A-Z]\b")),
     ("PHONE", re.compile(r"\b(?:\+?\d{1,3}[\s-]?)?\d{10}\b")),
@@ -19,12 +21,12 @@ _PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 #   inside one (a hyphen is a non-word char, so \b fires right after it).
 # - Unix epoch timestamps: 10-digit seconds match PHONE and 13-digit millis
 #   match CARD, which would blank out the timestamps needed to correlate
-#   events. Only runs starting with "1" (2001-2033) are protected; phone
+#   events (16-digit micros likewise). Only runs starting with "1" (2001-2033) are protected; phone
 #   numbers (US, India) and Aadhaar numbers never start with 1, and neither
 #   do 13-digit card numbers.
 _PROTECTED_RE = re.compile(
     r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
-    r"|\b1\d{9}(?:\d{3})?\b"
+    r"|\b1\d{9}(?:\d{3}){0,2}\b"
 )
 
 # Credentials embedded in free text (log lines, JSON payloads, error strings).
@@ -90,6 +92,21 @@ SENSITIVE_KEY_PARTS = (
 )
 
 
+def luhn_valid(digits: str) -> bool:
+    total = 0
+    for i, ch in enumerate(reversed(digits)):
+        d = int(ch)
+        if i % 2 == 1:
+            d = d * 2 - 9 if d > 4 else d * 2
+        total += d
+    return total % 10 == 0
+
+
+def _mask_card(match: re.Match[str]) -> str:
+    digits = re.sub(r"\D", "", match.group())  # strip separators
+    return "[REDACTED_CARD]" if luhn_valid(digits) else match.group()
+
+
 def is_sensitive_key(name: str) -> bool:
     lowered = name.lower()
     return lowered in PII_COLUMN_NAMES or any(part in lowered for part in SENSITIVE_KEY_PARTS)
@@ -111,7 +128,8 @@ def redact_text(value: str) -> str:
         protected = pattern.sub(_REDACTED_SECRET, protected)
     protected = _PROTECTED_RE.sub(_protect, protected)
     for label, pattern in _PATTERNS:
-        protected = pattern.sub(f"[REDACTED_{label}]", protected)
+        replacement = _mask_card if label == "CARD" else f"[REDACTED_{label}]"
+        protected = pattern.sub(replacement, protected)
     if not originals:
         return protected
     return re.sub(r"\x00P(\d+)\x00", lambda m: originals[int(m.group(1))], protected)
@@ -136,6 +154,11 @@ def _redact_mapping(value: Mapping[Any, Any]) -> dict[Any, Any]:
 def _redact_value(value: Any) -> Any:
     if isinstance(value, str):
         return redact_text(value)
+    if isinstance(value, int) and not isinstance(value, bool):
+        # A card number stored in a numeric column. Only the Luhn-checked card
+        # rule applies: phone/Aadhaar patterns would mask ordinary bigint ids.
+        digits = str(abs(value))
+        return "[REDACTED_CARD]" if 13 <= len(digits) <= 19 and luhn_valid(digits) else value
     if isinstance(value, Mapping):
         return _redact_mapping(value)
     if isinstance(value, list):

@@ -11,12 +11,14 @@ from botocore.exceptions import BotoCoreError, ClientError
 from opsinsight.core.config import Settings
 from opsinsight.core.errors import ToolError
 from opsinsight.core.field_heuristics import CORRELATION_ID_RE as _CORRELATION_ID_RE
+from opsinsight.core.limits import fit_rows_to_budget
 from opsinsight.core.logging_config import get_logger
 from opsinsight.core.redaction import redact_log_event, redact_row
 from opsinsight.integrations.cloudwatch.client import get_logs_client
 from opsinsight.integrations.cloudwatch.constants import (
     BYTES_SCANNED_SAFETY_MARGIN,
     FILTER_EVENTS_CAP,
+    FILTER_EVENTS_MAX_PAGES,
     RUNNING_STATUSES,
 )
 from opsinsight.integrations.cloudwatch.guardrail import (
@@ -68,6 +70,35 @@ class CloudWatchLogsService(BaseService):
         return self._logs_client_factory(self.settings)
 
     _aws_error_response = staticmethod(aws_error_response)
+
+    @staticmethod
+    def _filter_events_paged(client: LogsClient, limit: int, **kwargs: Any) -> list[dict]:
+        """filter_log_events following nextToken until `limit` events, the
+        page cap, or the end. A single call can legitimately return zero
+        events with a nextToken, which would read as "nothing found"."""
+        events: list[dict] = []
+        token: str | None = None
+        for _ in range(FILTER_EVENTS_MAX_PAGES):
+            page_kwargs = dict(kwargs, limit=limit - len(events))
+            if token:
+                page_kwargs["nextToken"] = token
+            resp = client.filter_log_events(**page_kwargs)
+            events.extend(resp.get("events", []))
+            token = resp.get("nextToken")
+            if not token or len(events) >= limit:
+                break
+        return events[:limit]
+
+    def _budget(self, rows: list[dict]) -> tuple[list[dict], dict]:
+        """Applies CW_MAX_RESPONSE_BYTES; returns (kept rows, meta additions)."""
+        kept, truncated, _ = fit_rows_to_budget(rows, self.settings.cw_max_response_bytes)
+        meta: dict = {"truncated": truncated}
+        if truncated:
+            meta["truncation_note"] = (
+                f"Response capped at {self.settings.cw_max_response_bytes} bytes: returned {len(kept)} "
+                f"of {len(rows)} rows. Select fewer fields, aggregate with stats, or narrow the filter."
+            )
+        return kept, meta
 
     @staticmethod
     def _epoch_seconds(dt: datetime) -> int:
@@ -160,17 +191,16 @@ class CloudWatchLogsService(BaseService):
             now = datetime.now(UTC)
             start_time = self._epoch_millis(now - timedelta(hours=1))
 
-            random_events = client.filter_log_events(
-                logGroupName=log_group,
-                startTime=start_time,
-                limit=settings.cw_describe_fields_sample_size,
-            ).get("events", [])
-            error_events = client.filter_log_events(
+            random_events = self._filter_events_paged(
+                client, settings.cw_describe_fields_sample_size, logGroupName=log_group, startTime=start_time
+            )
+            error_events = self._filter_events_paged(
+                client,
+                settings.cw_describe_fields_error_boost_size,
                 logGroupName=log_group,
                 startTime=start_time,
                 filterPattern=ERROR_BOOST_FILTER_PATTERN,
-                limit=settings.cw_describe_fields_error_boost_size,
-            ).get("events", [])
+            )
 
             seen_ids = {e.get("eventId") for e in random_events}
             tagged_events = [(e, "random") for e in random_events]
@@ -258,11 +288,12 @@ class CloudWatchLogsService(BaseService):
         end: str,
         limit: int,
         include_ptr: bool,
-        stop_if_running: bool = False,
         cancel: threading.Event | None = None,
     ) -> dict:
-        """`stop_if_running` stops a query still running when polling gives up,
-        for callers that will never resume its query_id. Setting `cancel`
+        """A query still running when polling gives up (CW_POLL_MAX_WAIT_S) is
+        stopped: no tool can resume a query_id, and a running query would keep
+        scanning (and billing) past the bytes ceiling. Polling also ends early
+        once bytes scanned crosses CW_MAX_BYTES_SCANNED. Setting `cancel`
         stops polling and the query itself (used when a caller times out,
         since the thread running this can't be cancelled)."""
         settings = self.settings
@@ -302,7 +333,12 @@ class CloudWatchLogsService(BaseService):
 
             # Waiting on `cancel` instead of sleeping wakes the poll loop as soon as it's set.
             sleep_fn = cancel.wait if cancel is not None else time.sleep
-            poll_result = poll_query_with_backoff(poll_fn, settings.cw_poll_max_wait_s, sleep_fn=sleep_fn)
+            poll_result = poll_query_with_backoff(
+                poll_fn,
+                settings.cw_poll_max_wait_s,
+                sleep_fn=sleep_fn,
+                stop_when=lambda r: r.get("bytes_scanned", 0) > settings.cw_max_bytes_scanned,
+            )
             bytes_scanned = poll_result.get("bytes_scanned", 0)
 
             if poll_result.get("status") == "Cancelled":
@@ -314,7 +350,7 @@ class CloudWatchLogsService(BaseService):
 
             if bytes_scanned > settings.cw_max_bytes_scanned:
                 if poll_result.get("status") in RUNNING_STATUSES:
-                    client.stop_query(queryId=query_id)
+                    self._stop_query(client, query_id)
                 check_bytes_scanned(bytes_scanned, settings.cw_max_bytes_scanned)
 
         except ToolError as e:
@@ -336,7 +372,7 @@ class CloudWatchLogsService(BaseService):
         except (BotoCoreError, ClientError) as e:
             return self._aws_error_response(e)
 
-        if poll_result["status"] in RUNNING_STATUSES and stop_if_running:
+        if poll_result["status"] in RUNNING_STATUSES:
             self._stop_query(client, query_id)
             return self.ok(
                 {
@@ -349,18 +385,7 @@ class CloudWatchLogsService(BaseService):
                 {"bytes_scanned": bytes_scanned},
             )
 
-        if poll_result["status"] in RUNNING_STATUSES:
-            return self.ok(
-                {
-                    "status": "Running",
-                    "query_id": query_id,
-                    "note": "Query is still running; poll again later with this query_id.",
-                    "bytes_scanned": bytes_scanned,
-                },
-                {"bytes_scanned": bytes_scanned},
-            )
-
-        rows = self._build_rows(poll_result["results"], include_ptr)
+        rows, budget_meta = self._budget(self._build_rows(poll_result["results"], include_ptr))
         return self.ok(
             {
                 "status": poll_result["status"],
@@ -371,7 +396,7 @@ class CloudWatchLogsService(BaseService):
                 "records_matched": poll_result.get("records_matched"),
                 "ptr_included": include_ptr,
             },
-            {"row_count": len(rows), "bytes_scanned": bytes_scanned},
+            {"row_count": len(rows), "bytes_scanned": bytes_scanned, **budget_meta},
         )
 
     @staticmethod
@@ -399,7 +424,6 @@ class CloudWatchLogsService(BaseService):
         end: str,
         limit: int = 200,
         include_ptr: bool = False,
-        stop_if_running: bool = False,
         cancel: threading.Event | None = None,
     ) -> dict:
         # A list searches several groups in one Insights query (one scan, one bill).
@@ -409,7 +433,7 @@ class CloudWatchLogsService(BaseService):
         except ToolError as e:
             return e.to_response()
         response = self.run_insights_query(
-            log_groups, query, start, end, limit, include_ptr, stop_if_running=stop_if_running, cancel=cancel
+            log_groups, query, start, end, limit, include_ptr, cancel=cancel
         )
         if response.get("ok"):
             response["data"].update(
@@ -429,12 +453,13 @@ class CloudWatchLogsService(BaseService):
                 settings.cw_default_window_hours,
                 settings.cw_max_window_hours,
             )
-            response = client.filter_log_events(
+            raw_events = self._filter_events_paged(
+                client,
+                FILTER_EVENTS_CAP,
                 logGroupName=log_group,
                 filterPattern=pattern,
                 startTime=self._epoch_millis(start_dt),
                 endTime=self._epoch_millis(end_dt),
-                limit=FILTER_EVENTS_CAP,
             )
         except ToolError as e:
             return e.to_response()
@@ -447,7 +472,9 @@ class CloudWatchLogsService(BaseService):
                 message=redact_log_event(e.get("message", ""), settings),
                 log_stream=e.get("logStreamName"),
             )
-            for e in response.get("events", [])
+            for e in raw_events
         ]
+        kept, budget_meta = self._budget([e.to_dict() for e in events])
+        events = events[: len(kept)]
         result = FilterEventsResult(log_group=log_group, events=events, event_count=len(events))
-        return self.ok(result.to_dict(), {"row_count": len(events)})
+        return self.ok(result.to_dict(), {"row_count": len(events), **budget_meta})

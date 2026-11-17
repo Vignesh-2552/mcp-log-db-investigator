@@ -32,10 +32,46 @@ def test_trailing_semicolon_allowed():
     assert result.upper().startswith("SELECT")
 
 
-def test_non_select_rejected():
+@pytest.mark.parametrize("query", ["SHOW EVENT TYPES", "FROM Log", "DESCRIBE Log"])
+def test_non_select_rejected(query):
     with pytest.raises(NewRelicGuardrailError) as exc:
-        validate_nrql("FROM Log SELECT *", max_rows=500)
+        validate_nrql(query, max_rows=500)
     assert exc.value.rule == "not_select"
+
+
+def test_from_first_select_is_allowed():
+    assert validate_nrql("FROM Log SELECT count(*)", max_rows=500) == "FROM Log SELECT count(*) LIMIT 500"
+
+
+def test_subquery_limit_cannot_replace_the_outer_one():
+    out = validate_nrql("SELECT * FROM Log WHERE a IN (SELECT a FROM Log LIMIT MAX) LIMIT MAX", 500, 100)
+    assert out == "SELECT * FROM Log WHERE a IN (SELECT a FROM Log LIMIT 500) LIMIT 100"
+
+
+def test_outer_limit_is_added_when_only_a_subquery_has_one():
+    out = validate_nrql("SELECT * FROM Log WHERE a IN (SELECT a FROM Log LIMIT 5)", 500, 100)
+    assert out.endswith(") LIMIT 100")
+
+
+def test_default_since_goes_on_the_outer_query():
+    out = enforce_nrql_window("SELECT * FROM Log WHERE a IN (SELECT a FROM Log LIMIT 5) LIMIT 100", 24, 168)
+    assert out == "SELECT * FROM Log WHERE a IN (SELECT a FROM Log LIMIT 5) SINCE 24 hours ago LIMIT 100"
+
+
+def test_subquery_window_is_capped():
+    with pytest.raises(NewRelicGuardrailError) as exc:
+        enforce_nrql_window(
+            "SELECT * FROM Log SINCE 1 hour ago WHERE a IN (SELECT a FROM Log SINCE 12 months ago LIMIT 5)",
+            24,
+            168,
+        )
+    assert exc.value.rule == "window_too_large"
+
+
+def test_blocked_keyword_suggests_backticks():
+    with pytest.raises(NewRelicGuardrailError) as exc:
+        validate_nrql("SELECT count(*) FROM Log FACET create", max_rows=500)
+    assert "`create`" in exc.value.detail
 
 
 @pytest.mark.parametrize(

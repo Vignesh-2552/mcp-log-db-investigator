@@ -59,7 +59,8 @@ async def test_db_search_by_identifier_finds_order_and_payment(db_service):
     result = await db_service.search_by_identifier(order_id, "order_id")
     assert result["ok"] is True
     tables_hit = {m["table"] for m in result["data"]["matches"]}
-    assert tables_hit == {"private.orders", "private.order_payment"}
+    # Other tables can hold the same order_id too (fulfillment, history, ...).
+    assert {"private.orders", "private.order_payment"} <= tables_hit
 
 
 async def test_db_sample_rows_masks_pii(db_service):
@@ -67,3 +68,17 @@ async def test_db_sample_rows_masks_pii(db_service):
     assert result["ok"] is True
     for row in result["data"]["rows"]:
         assert row["email"] == "[REDACTED]"
+
+
+async def test_session_hardening_survives_pooled_checkouts(db_env):
+    """Regression: SETs run from a pool 'connect' listener were rolled back
+    after the first checkout. Every checkout must see the hardened defaults."""
+    from sqlalchemy import text
+
+    from opsinsight.integrations.database.engine import get_engine
+
+    engine = get_engine(get_settings())
+    for _ in range(3):
+        async with engine.connect() as conn:
+            assert (await conn.execute(text("SHOW default_transaction_read_only"))).scalar() == "on"
+            assert (await conn.execute(text("SHOW statement_timeout"))).scalar() != "0"
