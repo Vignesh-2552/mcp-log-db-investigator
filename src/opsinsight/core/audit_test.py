@@ -30,6 +30,9 @@ EXPECTED_TOOLS = {
     "nr_describe_log_fields",
     "nr_run_nrql_query",
     "trace_request",
+    "ticket_get_issue",
+    "ticket_search_issues",
+    "ticket_list_comments",
 }
 
 

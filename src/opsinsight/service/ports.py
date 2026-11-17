@@ -19,6 +19,7 @@ from opsinsight.integrations.database.models import (
     TableDescription,
     TableSummary,
 )
+from opsinsight.integrations.tickets.models import CommentPage, Ticket, TicketSearchHit
 
 
 class Paginator(Protocol):
@@ -63,3 +64,18 @@ class DatabaseCatalog(Protocol):
     async def resolve_store(
         self, name_or_domain: str, settings: Settings | None = None
     ) -> StoreResolutionResult: ...
+
+
+class TicketProvider(Protocol):
+    """One ticket system (Linear, Jira). Implemented by
+    `integrations/tickets/linear_client.py::LinearClient` and
+    `jira_client.py::JiraClient`; `TicketService` never branches on which."""
+
+    name: str
+
+    async def get_issue(self, ticket_id: str) -> Ticket: ...
+    async def search_issues(self, text: str | None, jql: str | None, limit: int) -> list[TicketSearchHit]: ...
+    async def list_comments(self, ticket_id: str, limit: int) -> CommentPage: ...
+
+
+TicketProviderFactory = Callable[[Settings], TicketProvider]

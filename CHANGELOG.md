@@ -7,6 +7,14 @@ to PyPI only once, so every release gets a new number.
 ## [Unreleased]
 
 ### Added
+- **Linear / Jira ticket tools** (read-only): `ticket_get_issue`, `ticket_search_issues`,
+  `ticket_list_comments`. Configure `LINEAR_API_KEY` and/or `JIRA_BASE_URL` + `JIRA_EMAIL` +
+  `JIRA_API_TOKEN` (Jira Cloud). Ticket text is PII-redacted, people carry no email, Jira ADF is
+  converted to plain text, responses are size-capped and marked
+  `meta.content_trust: "untrusted_user_content"`, and nothing is cached. `/investigate_incident`
+  now accepts `ticket_id` (+ `provider`) instead of pasted `ticket_text`; with neither, it asks
+  the user first. `doctor`'s error sanitizer masks the Linear key, the Jira token and its
+  Basic-auth form.
 - **Response cache with optional Redis backend** (`CACHE_BACKEND=memory|redis|none`, default
   `memory`). Caches successful, redacted responses for table/column metadata, log groups,
   New Relic event types/attributes (`CACHE_METADATA_TTL_S`), and CloudWatch Insights results

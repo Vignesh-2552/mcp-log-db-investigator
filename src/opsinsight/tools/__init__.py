@@ -2,5 +2,6 @@ from opsinsight.tools import (  # noqa: F401
     cloudwatch,
     database,
     newrelic,
+    tickets,
     trace,
 )

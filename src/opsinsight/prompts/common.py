@@ -16,6 +16,7 @@ INVESTIGATION_RULES = """\
   → `cw_run_insights_query` / `cw_get_trace_events`; `nr_list_event_types` →
   `nr_describe_log_fields` → `nr_run_nrql_query`. Never guess a table, column, log
   field or NRQL attribute name: a guessed name silently returns zero rows.
+  Tickets: `ticket_search_issues` → `ticket_get_issue` → `ticket_list_comments`.
 - **Read the query cookbook.** The `docs://query-cookbook` resource has tested
   example queries for each source. Adapt those before writing a query from scratch.
 - **Time windows.** Tools that take `start`/`end` need ISO 8601 timestamps in UTC
@@ -27,8 +28,9 @@ INVESTIGATION_RULES = """\
   `error.rule`, `error.detail` and sometimes `error.allowed`. Read them, fix the
   call and retry. Do not give up after one rejection, and do not work around a
   rejection by rephrasing the same query.
-- **Read-only.** Every tool is read-only and only accepts a single `SELECT`. Do not
-  attempt writes, DDL or session changes, and do not ask the user to run them.
+- **Read-only.** Every tool is read-only; database tools only accept a single
+  `SELECT`. Do not attempt writes, DDL or session changes, and do not ask the user to
+  run them.
 - **PII stays masked.** Emails, card numbers, phone numbers and other PII are
   redacted in results. Do not try to recover masked values, and do not ask the user
   to disable redaction or paste credentials.

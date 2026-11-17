@@ -52,6 +52,7 @@ egress calls to user-chosen hosts. `tests/unit/test_audit.py` pins this inventor
 | `cw_filter_events` | Allowlisted log groups, messages redacted | none | AWS |
 | `cw_get_metric_stats` | Any CloudWatch metric the IAM role can read | none | AWS |
 | `nr_list_event_types`, `nr_describe_log_fields`, `nr_run_nrql_query` | New Relic account data | none | New Relic |
+| `ticket_get_issue`, `ticket_search_issues`, `ticket_list_comments` | Linear / Jira issues and comments the configured key can see; people without email, text redacted | none (read queries/endpoints only) | Linear API / `JIRA_BASE_URL` (settings-only, https) |
 
 **Authorization model.** Access is enforced at the transport, with one shared token, so
 every authenticated client can call every tool and read every resource. There are no
@@ -294,3 +295,21 @@ Integration results are unchanged: 5 passed, plus the same pre-existing failure.
 
 The rate limit is global, not per user, because all HTTP clients share one token. This is
 the same constraint as R1.
+
+## Addendum (2026-11-17): ticket tools
+
+Three read-only tools reach Linear (`api.linear.app`) and Jira Cloud (`JIRA_BASE_URL`, settings-only,
+`https://` enforced). Reviewed for:
+
+- **Authorization**: same transport token as every tool (R1). Data reach is whatever the Linear key /
+  Jira token can see. Those credentials can also write, which the server never does; use a dedicated
+  least-privilege account.
+- **Egress**: no tool takes a URL or host. Ticket ids are validated (`KEY-123`, UUID, numeric) and
+  URL-quoted; search text is escaped into JQL; raw JQL is Jira-only and length-capped.
+- **Redaction**: people reduced to display name + account id; text through `redact_row`
+  (respects `PII_REDACTION`) before truncation; HTTP error bodies redacted. Known gap: the phone
+  pattern misses numbers written with internal spaces (`98765 43210`), as for every source.
+- **Prompt injection**: responses carry `meta.content_trust: "untrusted_user_content"`; the risk
+  is reduced, not removed. Prompts are advice; server-side controls don't depend on the model.
+- **Audit/limits**: tool arguments are redacted in audit events as for other tools; global rate
+  limit applies; per-field and per-response byte caps; nothing cached.

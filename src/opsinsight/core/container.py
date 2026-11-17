@@ -5,6 +5,7 @@ from opsinsight.service.cloudwatch_logs_service import CloudWatchLogsService
 from opsinsight.service.cloudwatch_metrics_service import CloudWatchMetricsService
 from opsinsight.service.database_service import DatabaseService
 from opsinsight.service.newrelic_service import NewRelicService
+from opsinsight.service.ticket_service import TicketService
 from opsinsight.service.trace_service import TraceService
 from opsinsight.service.trace_sources import default_trace_sources
 
@@ -52,6 +53,7 @@ class Container:
         cloudwatch_metrics_service: CloudWatchMetricsService | None = None,
         newrelic_service: NewRelicService | None = None,
         trace_service: TraceService | None = None,
+        ticket_service: TicketService | None = None,
         response_cache: ResponseCache | None = None,
     ) -> None:
         self._settings_override = settings
@@ -61,6 +63,7 @@ class Container:
         self._cloudwatch_metrics_service = cloudwatch_metrics_service
         self._newrelic_service = newrelic_service
         self._trace_service = trace_service
+        self._ticket_service = ticket_service
 
     @property
     def settings(self) -> Settings:
@@ -110,6 +113,13 @@ class Container:
                 ),
             )
         return self._trace_service
+
+    @property
+    def ticket_service(self) -> TicketService:
+        # Deliberately not given the response cache: tickets change constantly.
+        if self._ticket_service is None:
+            self._ticket_service = TicketService(self.settings)
+        return self._ticket_service
 
 
 _container: Container | None = None

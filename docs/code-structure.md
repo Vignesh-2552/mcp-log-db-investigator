@@ -64,16 +64,18 @@ src/opsinsight/
 │   │                            # cw_run_insights_query, cw_get_trace_events,
 │   │                            # cw_filter_events, cw_get_metric_stats
 │   ├── newrelic/                # nr_list_event_types, nr_describe_log_fields, nr_run_nrql_query
+│   ├── tickets/                 # ticket_get_issue, ticket_search_issues, ticket_list_comments
 │   └── trace/                   # trace_request (cross-source)
 ├── service/                     # Business logic — one class per source
 │   ├── base.py                  # BaseService: settings handle + ok() envelope
 │   ├── ports.py                 # Protocols for injected clients (LogsClient, MetricsClient,
-│   │                            # NrqlRunner, EngineFactory, DatabaseCatalog)
+│   │                            # NrqlRunner, EngineFactory, DatabaseCatalog, TicketProvider)
 │   ├── database_service.py      # DatabaseService (injectable engine + catalog, query slots)
 │   ├── cloudwatch_logs_service.py    # CloudWatchLogsService (log groups, Insights, filter, trace)
 │   ├── cloudwatch_metrics_service.py # CloudWatchMetricsService (metric statistics)
 │   ├── cloudwatch_common.py     # aws_error_response, shared by both CloudWatch services
 │   ├── newrelic_service.py      # NewRelicService (injectable run_nrql_fn)
+│   ├── ticket_service.py        # TicketService (injectable provider factories; never cached)
 │   ├── trace_service.py         # TraceService: runs registered TraceSources, merges timeline
 │   ├── trace_sources.py         # TraceSource Protocol + one adapter per source
 │   └── trace_models.py          # TraceRequest, TraceJob, SourceResult, timeline models
@@ -94,6 +96,12 @@ src/opsinsight/
 │       ├── client.py            # NerdGraph GraphQL client (httpx)
 │       ├── queries.py           # Fixed NRQL text
 │       ├── constants.py / models.py
+│   └── tickets/                 # One source, two providers (Linear, Jira Cloud)
+│       ├── guardrail.py         # Provider selection, id/query/JQL checks, limit clamp (pure)
+│       ├── linear_client.py     # Linear GraphQL (httpx), read queries only
+│       ├── jira_client.py       # Jira Cloud REST v3 (httpx), read endpoints only
+│       ├── adf.py               # Atlassian Document Format → plain text (pure)
+│       └── models.py            # Ticket, TicketComment, TicketSearchHit, CommentPage
 ├── prompts/                     # @mcp.prompt() workflows — one file per prompt, pure text
 │   ├── common.py                # INVESTIGATION_RULES shared by all prompts + quote_input()
 │   ├── investigate_incident.py  # Support ticket → incident report
@@ -152,7 +160,8 @@ src/opsinsight/
 ├── integrations/
 │   ├── database/   guardrail_test.py, engine_test.py, introspect_test.py, queries_test.py
 │   ├── cloudwatch/ guardrail_test.py
-│   └── newrelic/   guardrail_test.py, client_test.py
+│   ├── newrelic/   guardrail_test.py, client_test.py
+│   └── tickets/    guardrail_test.py, adf_test.py, linear_client_test.py, jira_client_test.py
 ├── service/
 │   ├── database_service_test.py
 │   ├── database_service_limits_test.py        # byte budget, query slots, fan-out
@@ -161,6 +170,7 @@ src/opsinsight/
 │   ├── cloudwatch_logs_service_inventory_test.py
 │   ├── cloudwatch_metrics_service_test.py
 │   ├── newrelic_service_test.py
+│   ├── ticket_service_test.py
 │   └── trace_service_test.py
 ├── prompts/
 │   ├── common_test.py                # every prompt: registered, shared rules, names only real tools

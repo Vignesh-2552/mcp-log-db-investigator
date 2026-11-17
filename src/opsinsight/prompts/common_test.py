@@ -13,7 +13,7 @@ from opsinsight.prompts.common import INVESTIGATION_RULES, quote_input
 
 # Minimal required arguments for each prompt.
 REQUIRED_ARGS = {
-    "investigate_incident": {"ticket_text": "Order 88213 failed at checkout"},
+    "investigate_incident": {},
     "trace_user_journey": {"identifier": "ord_89214"},
     "slow_endpoint_rca": {"endpoint_or_transaction": "/api/checkout"},
 }
@@ -21,7 +21,7 @@ REQUIRED_ARGS = {
 # Tool names are `<source>_<verb>_...`; the verb keeps parameter names such as
 # `db_id_type` or `cw_field` from matching.
 _TOOL_NAME_RE = re.compile(
-    r"`((?:db|cw|nr)_(?:list|describe|sample|explain|run|search|resolve|get|filter)_[a-z_]+"
+    r"`((?:db|cw|nr|ticket)_(?:list|describe|sample|explain|run|search|resolve|get|filter|update)_[a-z_]+"
     r"|trace_request)`"
 )
 

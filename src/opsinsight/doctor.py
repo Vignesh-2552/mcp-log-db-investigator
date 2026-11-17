@@ -8,6 +8,7 @@ across all three observability pillars without booting the full MCP server.
 from __future__ import annotations
 
 import asyncio
+import base64
 import enum
 import re
 import sys
@@ -124,6 +125,20 @@ def sanitize_error(message: str, settings: Settings | None = None) -> str:
             key = settings.new_relic_api_key.get_secret_value()
             if key and key in cleaned:
                 cleaned = cleaned.replace(key, mask_key(key))
+
+        if settings.linear_api_key:
+            key = settings.linear_api_key.get_secret_value()
+            if key and key in cleaned:
+                cleaned = cleaned.replace(key, mask_key(key))
+
+        if settings.jira_api_token:
+            token = settings.jira_api_token.get_secret_value()
+            if token:
+                cleaned = cleaned.replace(token, "[REDACTED_SECRET]")
+                if settings.jira_email:
+                    # httpx sends Basic base64(email:token); mask that form too.
+                    basic = base64.b64encode(f"{settings.jira_email}:{token}".encode()).decode()
+                    cleaned = cleaned.replace(basic, "[REDACTED_SECRET]")
 
         if settings.mcp_auth_token:
             token = settings.mcp_auth_token.get_secret_value()

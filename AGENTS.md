@@ -14,8 +14,10 @@ redacts PII and returns a structured response.
 
 ## Hard rules (never break these)
 
-1. **Read-only, always.** No tool may write to a database, change AWS/New Relic state, or skip
-   a guardrail. A change that weakens this needs an issue and a human decision first.
+1. **Read-only, always.** No tool may write to a database, change AWS/New Relic/Linear/Jira
+   state, or skip a guardrail. A change that weakens this needs an issue and a human decision
+   first. (The one planned exception, a ticket status change behind an opt-in flag and per-call
+   user approval, is in `docs/plan/ticket-systems-linear-jira.md` and is not built.)
 2. **Respect the layering.** `tools/*` → `service/*` → `integrations/<source>/guardrail.py` →
    `integrations/<source>/client.py | engine.py`. Calls only go downward. No layer skipping.
 3. **Tool files hold no logic.** A file in `tools/<source>/` is the `@mcp.tool()` decorator, the
@@ -130,6 +132,7 @@ risk in the PR description.
 ## Things that do not exist (do not assume them)
 
 `investigation_start` is **not implemented**. See `docs/design.md` §4.5 before building on it.
+No ticket write tool exists (no status change, comment, create or edit).
 (The MCP prompts `investigate_incident`, `trace_user_journey` and `slow_endpoint_rca` do exist,
 in `src/opsinsight/prompts/`.)
 

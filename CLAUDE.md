@@ -23,6 +23,18 @@ code: adding a source to `trace_request` means writing one adapter and registeri
 `default_trace_sources()`. Anything broader is still merged by
 the client model. `investigation_start` is **not implemented**; don't assume it exists.
 
+**Ticket tools** (`ticket_get_issue`, `ticket_search_issues`, `ticket_list_comments`) read Linear
+and Jira Cloud through `TicketService` (`service/ticket_service.py`). It depends on one
+`TicketProvider` Protocol (`service/ports.py`) implemented by `LinearClient` and `JiraClient` in
+`integrations/tickets/` (one source package, two providers, so the service imports only its own
+integrations). Providers are injected as factories keyed by name (`providers={"linear": ...}`).
+`TICKET_PROVIDER=auto` picks the one configured provider; with both, calls must pass `provider`
+(ids look the same). Ticket responses are **never cached**, set
+`meta.content_trust: "untrusted_user_content"`, carry people without email, and are redacted
+with `redact_row` (not `redact_text`, which ignores `PII_REDACTION`) before truncation. Jira's
+ADF bodies go through `integrations/tickets/adf.py`. The ticket status change in
+`docs/plan/ticket-systems-linear-jira.md` is **not implemented**; the server is still read-only.
+
 **MCP prompts** live in `prompts/` (one file per prompt: `investigate_incident`,
 `trace_user_journey`, `slow_endpoint_rca`), registered with `@mcp.prompt()` and imported by
 `server.py` like tools and resources. They are pure string formatting (no I/O, no settings, no
@@ -69,7 +81,7 @@ Paths below without a `src/` prefix are relative to that package directory.
 build a query without passing it through the guardrail first.
 
 **`src/opsinsight/service/` holds one class per source** — `DatabaseService`,
-`CloudWatchLogsService`, `CloudWatchMetricsService`, `NewRelicService`
+`CloudWatchLogsService`, `CloudWatchMetricsService`, `NewRelicService`, `TicketService`
 (`service/database_service.py`, `service/cloudwatch_logs_service.py`,
 `service/cloudwatch_metrics_service.py`, `service/newrelic_service.py`), all inheriting `BaseService` (`service/base.py`) for the
 shared `Settings` handle and the `ok(data, meta)` success-envelope helper. This is where a
@@ -112,7 +124,7 @@ TYPES`, which isn't a `SELECT` and would otherwise be rejected by `validate_nrql
 **`core/container.py` is the composition root** — the one place that constructs services and
 wires their dependencies. `Container` lazily builds and caches (singleton-scoped, per
 container instance) `database_service`/`cloudwatch_logs_service`/`cloudwatch_metrics_service`/
-`newrelic_service`/`trace_service`, each backed by
+`newrelic_service`/`trace_service`/`ticket_service`, each backed by
 `self.settings` (which resolves through `get_settings()` unless a `Settings` override was
 passed to the constructor). Every dependency — `settings`, or a fully pre-built service — can
 also be injected via `Container(...)` keyword arguments; tests that want an isolated object
@@ -143,8 +155,8 @@ imported by every tool/resource/prompt module as `from opsinsight.core.app impor
 specifically so `server.py` (which is also the entry point run via `-m`/`investigation-server`)
 never gets circularly imported — see the comment in `core/app.py` if touching this.
 
-**Registration is import-side-effect based**: `src/opsinsight/tools/__init__.py` imports the four
-tool packages (`cloudwatch`, `database`, `newrelic`, `trace`); each package's own `__init__.py` in
+**Registration is import-side-effect based**: `src/opsinsight/tools/__init__.py` imports the five
+tool packages (`cloudwatch`, `database`, `newrelic`, `tickets`, `trace`); each package's own `__init__.py` in
 turn imports every tool file in it purely for the `@mcp.tool()` decorator to run, and
 re-exports the tool function so it can also be imported as `from opsinsight.tools.<source> import
 <tool_name>`. `src/opsinsight/resources/__init__.py` does the same for `@mcp.resource()`. `server.py`
@@ -153,7 +165,7 @@ added to its source package's `__init__.py` import list (and, transitively, the 
 package must already be listed in `src/opsinsight/tools/__init__.py`) or it will never register.
 
 **Errors are structured and self-correcting by design**: every guardrail raises a `ToolError`
-subclass (`GuardrailError`, `CWGuardrailError`, `NewRelicGuardrailError` in `core/errors.py`)
+subclass (`GuardrailError`, `CWGuardrailError`, `NewRelicGuardrailError`, `TicketGuardrailError` in `core/errors.py`)
 carrying a machine-readable `rule` plus a `detail` string explaining what to change — never a
 bare "denied". The service method behind each tool (not the one-line tool file) catches
 `ToolError`s and converts them via `.to_response()` into `{"ok": False, "error": {...}}`;
