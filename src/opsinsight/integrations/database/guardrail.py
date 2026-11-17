@@ -92,6 +92,23 @@ def _check_projection_redaction(tree: exp.Expression) -> None:
     renames_columns = any(a.columns for a in tree.find_all(exp.TableAlias))
     has_set_operation = any(True for _ in tree.find_all(exp.SetOperation))
 
+    # `t.*` / `*` is fine as a select-list item itself (columns keep their
+    # names) or inside COUNT, but anywhere else in a projection it turns a
+    # whole row into one value: row_to_json(t.*), json_agg(t.*), (t.*)::text.
+    for star in tree.find_all(exp.Star):
+        node = star.parent if isinstance(star.parent, exp.Column) else star
+        projection = _projection_of(node)
+        if projection is None or projection is node:
+            continue
+        if isinstance(projection, exp.Count) or _inside(node, projection, (exp.Count,)):
+            continue
+        raise GuardrailError(
+            rule="whole_row_reference",
+            message=f"Whole-row value {node.sql(dialect=DIALECT)!r} inside an expression is not allowed.",
+            detail="Row values can't be PII-masked field by field. Select the columns you need "
+            "(or `alias.*` on its own) instead.",
+        )
+
     for column in tree.find_all(exp.Column):
         projection = _projection_of(column)
         if projection is None:
