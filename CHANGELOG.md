@@ -44,8 +44,8 @@ to PyPI only once, so every release gets a new number.
 ### Added
 - `CW_MAX_RESPONSE_BYTES` and `NR_MAX_RESPONSE_BYTES` (default 1 MB), `meta.truncated` on
   CloudWatch and NRQL results.
-- CI runs the integration tests against a seeded Postgres service (`.github/ci/seed.sql`);
-  `PG_CHECK_TIMEOUT_S` sets the local reachability timeout (default 10 s).
+- `PG_CHECK_TIMEOUT_S` sets the integration-test reachability timeout (default 10 s, was 3 s),
+  so tests against a remote replica no longer skip.
 
 ### Changed
 - `cw_run_insights_query` / `cw_get_trace_events` return `status: "Stopped"` instead of

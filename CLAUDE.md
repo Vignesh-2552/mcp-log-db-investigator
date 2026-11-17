@@ -42,7 +42,7 @@ uv run pytest -m "not integration"            # unit tests, no external deps
 uv run pytest src/opsinsight/integrations/database/guardrail_test.py -q  # one test file
 uv run pytest -k test_limit_clamped              # one test by name
 uv run pytest -m integration                     # requires a reachable Postgres; auto-skips otherwise
-                                                 # (PG_CHECK_TIMEOUT_S, default 10; CI seeds .github/ci/seed.sql)
+                                                 # (reachability timeout: PG_CHECK_TIMEOUT_S, default 10)
 uv run ruff check .                              # lint
 uv run investigation-server                      # start the MCP server (streamable HTTP, :8001/mcp by default)
 ```
