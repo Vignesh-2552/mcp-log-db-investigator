@@ -201,6 +201,20 @@ keep scanning with no ceiling. `filter_log_events` calls follow `nextToken` (up 
 `FILTER_EVENTS_MAX_PAGES`), since AWS returns empty pages mid-scan. CloudWatch and NRQL rows are
 capped at `CW_MAX_RESPONSE_BYTES` / `NR_MAX_RESPONSE_BYTES` (`meta.truncated`).
 
+**Response cache** (`core/response_cache.py`, `CACHE_BACKEND=memory|redis|none`): one
+`ResponseCache` built in `Container.response_cache` and constructor-injected (`cache=`) into
+`DatabaseService`, `CloudWatchLogsService` and `NewRelicService` (default `NULL_CACHE`, so unit
+tests are uncached unless they pass one). Public methods wrap a private `_method` with
+`cache.cached(...)` (sync, CloudWatch) or `cache.acached(...)` (async). Only successful,
+already-redacted responses for stable data are stored: catalog/inventory metadata
+(`CACHE_METADATA_TTL_S`) and CloudWatch Insights results whose window closed at least
+`CW_RESULT_CACHE_SETTLE_S` ago and finished `Complete` (`CW_RESULT_CACHE_TTL_S`). Never cache
+`run_query`, NRQL, or an open window. Each service's `_cache_scope` (`scope_fingerprint`) must
+include everything that changes the response (DSN/account/region, allowlist, response budget,
+`pii_redaction`). The cache fails open: backend errors become misses and the backend is skipped
+for `CACHE_RETRY_AFTER_S`. The Redis backend (`integrations/redis/client.py`, optional
+`[redis]` extra) is the only cache I/O; `doctor`'s `check_cache` PINGs it.
+
 **Engines and clients are cached per configuration, not globally**: `get_engine(settings)` keys
 on DSN + session timeouts and `get_logs_client`/`get_metrics_client` key on region + credentials,
 so a service built with an override `Settings` really talks to that DB/account. `introspect.*`

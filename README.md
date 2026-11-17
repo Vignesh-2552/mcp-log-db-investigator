@@ -312,6 +312,34 @@ What differs from the local (`uv run`) path:
 See `.env.example` for every available variable, including tuning knobs
 (row limits, time-window caps, timeouts) that all ship with working defaults.
 
+### Response cache (optional Redis)
+
+Repeated lookups are served from a cache. Only successful, already-redacted
+responses for data that doesn't change within the TTL are stored:
+
+| Cached | TTL setting |
+|---|---|
+| `db_list_tables`, `db_describe_table`, `cw_list_log_groups`, `cw_describe_log_fields`, `nr_list_event_types`, `nr_describe_log_fields` | `CACHE_METADATA_TTL_S` (600 s) |
+| `cw_run_insights_query` / `cw_get_trace_events` / `trace_request`'s CloudWatch search, when the window ended at least `CW_RESULT_CACHE_SETTLE_S` (300 s) ago. A repeat costs no scan; `meta.bytes_scanned` is `0` | `CW_RESULT_CACHE_TTL_S` (3600 s) |
+
+`db_run_query`, NRQL queries and anything with an open time window are never
+cached. Each response carries `meta.cache: "hit" | "miss"`.
+
+The default backend is in-process memory. To share the cache across replicas
+and restarts, use Redis:
+
+```bash
+pip install "opsinsight-mcp[redis]"     # or: uvx --from "opsinsight-mcp[redis]" opsinsight-mcp
+CACHE_BACKEND=redis
+REDIS_URL=rediss://:password@redis.internal:6379/0
+```
+
+If Redis is unreachable the server keeps working uncached (fail open) and retries
+after `CACHE_RETRY_AFTER_S`; `doctor` reports it as a warning. Keys are hashed
+(no SQL text, identifiers or DSN in key names) and prefixed `opsinsight:v1:`.
+Cached values are tool responses, which can include redacted rows and log lines,
+so protect Redis like the data sources: authentication, TLS and a private network.
+
 ## Configure Your AI Assistant
 
 **Cursor** — `.cursor/mcp.json`:

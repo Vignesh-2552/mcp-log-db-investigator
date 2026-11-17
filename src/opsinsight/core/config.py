@@ -78,6 +78,25 @@ class Settings(BaseSettings):
     trace_max_events: int = Field(500, ge=1)
     trace_max_response_bytes: int = Field(1_000_000, ge=1)
 
+    # Response cache (core/response_cache.py). Only successful, already-
+    # redacted responses for stable data are cached: catalog/inventory
+    # metadata and CloudWatch Insights results for windows that have closed.
+    # memory = per process (default); redis = shared across replicas and
+    # restarts (needs REDIS_URL and `opsinsight-mcp[redis]`); none = off.
+    cache_backend: Literal["memory", "redis", "none"] = "memory"
+    # redis:// or rediss:// (TLS); may embed a password, so kept secret.
+    redis_url: SecretStr | None = None
+    redis_socket_timeout_s: float = Field(0.5, gt=0)
+    # After a cache error, skip the cache for this long (fail open).
+    cache_retry_after_s: float = Field(30.0, ge=0)
+    cache_memory_max_entries: int = Field(1024, ge=1)
+    # TTL for tables/columns, log groups, NR event types and attributes. 0 = off.
+    cache_metadata_ttl_s: int = Field(600, ge=0)
+    # TTL for Insights results whose window ended at least
+    # CW_RESULT_CACHE_SETTLE_S ago (late-arriving logs settle first). 0 = off.
+    cw_result_cache_ttl_s: int = Field(3600, ge=0)
+    cw_result_cache_settle_s: int = Field(300, ge=0)
+
     # Server
     # Loopback by default. Binding anywhere else requires MCP_AUTH_TOKEN (or an
     # explicit ALLOW_UNAUTHENTICATED_HTTP=true for deployments behind an
@@ -115,6 +134,12 @@ class Settings(BaseSettings):
                     f"{source.upper()}_DEFAULT_WINDOW_HOURS ({default}) exceeds "
                     f"{source.upper()}_MAX_WINDOW_HOURS ({maximum})."
                 )
+        return self
+
+    @model_validator(mode="after")
+    def _redis_backend_needs_url(self) -> "Settings":
+        if self.cache_backend == "redis" and self.redis_url is None:
+            raise ValueError("CACHE_BACKEND=redis requires REDIS_URL.")
         return self
 
     @model_validator(mode="after")

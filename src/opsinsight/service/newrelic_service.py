@@ -8,6 +8,7 @@ from opsinsight.core.errors import ToolError
 from opsinsight.core.field_heuristics import CORRELATION_ID_RE as _CORRELATION_ID_RE
 from opsinsight.core.limits import fit_rows_to_budget
 from opsinsight.core.redaction import redact_rows, redact_text
+from opsinsight.core.response_cache import NULL_CACHE, ResponseCache, scope_fingerprint
 from opsinsight.integrations.newrelic.client import run_nrql
 from opsinsight.integrations.newrelic.constants import EVENT_TYPE_RE
 from opsinsight.integrations.newrelic.guardrail import (
@@ -40,9 +41,16 @@ class NewRelicService(BaseService):
         self,
         settings: Settings,
         run_nrql_fn: Callable[[str, Settings], Awaitable[dict]] = run_nrql,
+        cache: ResponseCache = NULL_CACHE,
     ) -> None:
         super().__init__(settings)
         self._run_nrql = run_nrql_fn
+        # Event-type and attribute inventories only; NRQL results use
+        # relative windows (`SINCE 1 hour ago`) and are never cached.
+        self._cache = cache
+        self._cache_scope = scope_fingerprint(
+            "nr", settings.new_relic_account_id, settings.new_relic_region, settings.pii_redaction
+        )
 
     @staticmethod
     def _httpx_error_response(e: httpx.HTTPError) -> dict:
@@ -57,6 +65,12 @@ class NewRelicService(BaseService):
         ).to_response()
 
     async def describe_log_fields(self, event_type: str = "Log", hours: int = 1) -> dict:
+        return await self._cache.acached(
+            "nr.describe_log_fields", self._cache_scope, [event_type, hours], self.settings.cache_metadata_ttl_s,
+            lambda: self._describe_log_fields(event_type, hours),
+        )
+
+    async def _describe_log_fields(self, event_type: str, hours: int) -> dict:
         settings = self.settings
         if not EVENT_TYPE_RE.match(event_type):
             return ToolError(
@@ -95,6 +109,12 @@ class NewRelicService(BaseService):
         return self.ok(result_model.to_dict(), {"field_count": len(keys)})
 
     async def list_event_types(self, hours: int = 24) -> dict:
+        return await self._cache.acached(
+            "nr.list_event_types", self._cache_scope, [hours], self.settings.cache_metadata_ttl_s,
+            lambda: self._list_event_types(hours),
+        )
+
+    async def _list_event_types(self, hours: int) -> dict:
         settings = self.settings
         window = max(1, min(hours, settings.nr_max_window_hours))
         query = build_show_event_types_query(window)

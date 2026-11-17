@@ -116,3 +116,22 @@ async def test_run_nrql_query_caps_rows_to_response_budget(monkeypatch):
 
     assert 0 < result["meta"]["row_count"] == result["data"]["row_count"] < 50
     assert result["meta"]["truncated"] is True
+
+
+async def test_event_type_inventory_is_cached_but_nrql_is_not():
+    from opsinsight.core.response_cache import MemoryBackend, ResponseCache
+
+    queries = []
+
+    async def fake_run_nrql(query, settings):
+        queries.append(query)
+        return {"results": [{"eventType": "Log"}], "metadata": {}}
+
+    service = NewRelicService(get_settings(), run_nrql_fn=fake_run_nrql, cache=ResponseCache(MemoryBackend()))
+
+    await service.list_event_types()
+    assert (await service.list_event_types())["meta"]["cache"] == "hit"
+    await service.run_nrql_query("SELECT count(*) FROM Log")
+    await service.run_nrql_query("SELECT count(*) FROM Log")
+
+    assert len(queries) == 3

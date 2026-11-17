@@ -14,6 +14,7 @@ from opsinsight.core.field_heuristics import CORRELATION_ID_RE as _CORRELATION_I
 from opsinsight.core.limits import fit_rows_to_budget
 from opsinsight.core.logging_config import get_logger
 from opsinsight.core.redaction import redact_log_event, redact_row
+from opsinsight.core.response_cache import NULL_CACHE, ResponseCache, scope_fingerprint
 from opsinsight.integrations.cloudwatch.client import get_logs_client
 from opsinsight.integrations.cloudwatch.constants import (
     BYTES_SCANNED_SAFETY_MARGIN,
@@ -62,9 +63,22 @@ class CloudWatchLogsService(BaseService):
         self,
         settings: Settings,
         logs_client_factory: LogsClientFactory = get_logs_client,
+        cache: ResponseCache = NULL_CACHE,
     ) -> None:
         super().__init__(settings)
         self._logs_client_factory = logs_client_factory
+        self._cache = cache
+        # The allowlist and response budget shape responses, so they are part
+        # of the scope: changing either never serves an old cached response.
+        self._cache_scope = scope_fingerprint(
+            "cw",
+            settings.cloudwatch_effective_region,
+            settings.cloudwatch_effective_access_key_id,
+            settings.aws_profile,
+            sorted(settings.cw_log_group_allowlist_set),
+            settings.cw_max_response_bytes,
+            settings.pii_redaction,
+        )
 
     def _logs_client(self) -> LogsClient:
         return self._logs_client_factory(self.settings)
@@ -150,6 +164,12 @@ class CloudWatchLogsService(BaseService):
         return max(int((ceiling * BYTES_SCANNED_SAFETY_MARGIN) / scan_rate), 1)
 
     def list_log_groups(self, prefix: str | None = None) -> dict:
+        return self._cache.cached(
+            "cw.list_log_groups", self._cache_scope, [prefix], self.settings.cache_metadata_ttl_s,
+            lambda: self._list_log_groups(prefix),
+        )
+
+    def _list_log_groups(self, prefix: str | None) -> dict:
         settings = self.settings
         allowlist = settings.cw_log_group_allowlist_set
         if not allowlist:
@@ -184,6 +204,12 @@ class CloudWatchLogsService(BaseService):
         return self.ok({"log_groups": [g.to_dict() for g in groups]}, {"row_count": len(groups)})
 
     def describe_log_fields(self, log_group: str) -> dict:
+        return self._cache.cached(
+            "cw.describe_log_fields", self._cache_scope, [log_group], self.settings.cache_metadata_ttl_s,
+            lambda: self._describe_log_fields(log_group),
+        )
+
+    def _describe_log_fields(self, log_group: str) -> dict:
         settings = self.settings
         try:
             validate_log_groups([log_group], settings.cw_log_group_allowlist_set)
@@ -281,6 +307,45 @@ class CloudWatchLogsService(BaseService):
         return self.ok(result.to_dict(), {"shape_count": len(shapes), "sampled_events": total_events})
 
     def run_insights_query(
+        self,
+        log_groups: list[str],
+        query: str,
+        start: str,
+        end: str,
+        limit: int,
+        include_ptr: bool,
+        cancel: threading.Event | None = None,
+    ) -> dict:
+        """Runs the query, serving a cached result when the window closed at
+        least CW_RESULT_CACHE_SETTLE_S ago: logs in a past window don't
+        change, and a repeat costs nothing instead of another scan. Only
+        `Complete` results are cached."""
+        settings = self.settings
+
+        def run() -> dict:
+            return self._run_insights_query(log_groups, query, start, end, limit, include_ptr, cancel)
+
+        try:
+            start_dt, end_dt = clamp_window(start, end, settings.cw_default_window_hours, settings.cw_max_window_hours)
+        except ToolError:
+            return run()  # reports the same error, uncached
+        if end_dt > datetime.now(UTC) - timedelta(seconds=settings.cw_result_cache_settle_s):
+            return run()  # window still open: new events can arrive
+
+        response = self._cache.cached(
+            "cw.insights",
+            self._cache_scope,
+            [sorted(log_groups), query, start_dt.isoformat(), end_dt.isoformat(), limit, include_ptr],
+            settings.cw_result_cache_ttl_s,
+            run,
+            should_store=lambda r: r.get("ok") is True and r["data"].get("status") == "Complete",
+        )
+        if response.get("meta", {}).get("cache") == "hit":
+            # Nothing was scanned (or billed) for this call.
+            response["meta"]["bytes_scanned"] = 0
+        return response
+
+    def _run_insights_query(
         self,
         log_groups: list[str],
         query: str,

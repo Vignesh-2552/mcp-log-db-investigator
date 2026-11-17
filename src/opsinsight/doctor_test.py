@@ -593,3 +593,35 @@ class TestRunDoctor:
         settings = _settings()
         code = await run_doctor(settings)
         assert code == 0
+
+
+def test_check_cache_skips_non_redis_backends():
+    from opsinsight.doctor import CheckStatus, check_cache
+
+    assert check_cache(Settings(cache_backend="memory")).status == CheckStatus.SKIPPED
+
+
+def test_check_cache_pings_redis():
+    from opsinsight.doctor import CheckStatus, check_cache
+
+    class _Backend:
+        def ping(self):
+            return True
+
+    settings = Settings(cache_backend="redis", redis_url="redis://localhost:6379/0")
+    assert check_cache(settings, backend_factory=lambda s: _Backend()).status == CheckStatus.PASS
+
+
+def test_check_cache_unreachable_redis_warns_and_masks_password():
+    from opsinsight.doctor import CheckStatus, check_cache
+
+    url = "redis://:hunter2secret@cache.internal:6379/0"
+
+    class _Backend:
+        def ping(self):
+            raise ConnectionError(f"Error connecting to {url}")
+
+    result = check_cache(Settings(cache_backend="redis", redis_url=url), backend_factory=lambda s: _Backend())
+
+    assert result.status == CheckStatus.WARN
+    assert "hunter2secret" not in (result.error or "")

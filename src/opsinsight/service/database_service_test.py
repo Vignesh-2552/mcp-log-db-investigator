@@ -300,3 +300,29 @@ async def test_catalog_is_constructor_injected():
     result = await service.list_tables("public")
     assert result["ok"] is True
     assert result["data"]["tables"][0]["table"] == "public.orders"
+
+
+async def test_catalog_metadata_is_cached_but_queries_are_not(engine):
+    from opsinsight.core.response_cache import MemoryBackend, ResponseCache
+    from opsinsight.integrations.database.models import TableSummary
+
+    calls = []
+
+    class _Catalog:
+        async def list_tables(self, schema, settings=None):
+            calls.append(schema)
+            return [TableSummary(table="public.t", row_estimate=1, comment=None)]
+
+    engine.result = _Result(["n"], [(1,)])
+    service = DatabaseService(
+        Settings(), engine_factory=lambda s: engine, catalog=_Catalog(), cache=ResponseCache(MemoryBackend())
+    )
+
+    await service.list_tables("public")
+    second = await service.list_tables("public")
+    await service.run_query("SELECT 1 AS n")
+    await service.run_query("SELECT 1 AS n")
+
+    assert calls == ["public"]
+    assert second["meta"]["cache"] == "hit"
+    assert len(engine.executed) == 2  # live data always re-queried

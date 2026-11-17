@@ -6,6 +6,15 @@ to PyPI only once, so every release gets a new number.
 
 ## [Unreleased]
 
+### Added
+- **Response cache with optional Redis backend** (`CACHE_BACKEND=memory|redis|none`, default
+  `memory`). Caches successful, redacted responses for table/column metadata, log groups,
+  New Relic event types/attributes (`CACHE_METADATA_TTL_S`), and CloudWatch Insights results
+  for windows that closed at least `CW_RESULT_CACHE_SETTLE_S` ago (`CW_RESULT_CACHE_TTL_S`),
+  so repeating a past-window query costs no scan. Responses carry `meta.cache`. Redis
+  (`REDIS_URL`, install `opsinsight-mcp[redis]`) shares the cache across replicas; it fails
+  open with a back-off, keys are hashed, and `doctor` checks connectivity.
+
 ### Security
 - **DB session hardening now survives pooled connections.** `default_transaction_read_only`,
   `statement_timeout` and `idle_in_transaction_session_timeout` were applied with `SET` from a

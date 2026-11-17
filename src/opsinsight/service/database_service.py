@@ -16,6 +16,7 @@ from opsinsight.core.limits import (
 )
 from opsinsight.core.logging_config import get_logger
 from opsinsight.core.redaction import redact_rows
+from opsinsight.core.response_cache import NULL_CACHE, ResponseCache, scope_fingerprint
 from opsinsight.integrations.database import introspect
 from opsinsight.integrations.database.engine import get_engine
 from opsinsight.integrations.database.guardrail import (
@@ -48,10 +49,15 @@ class DatabaseService(BaseService):
         settings: Settings,
         engine_factory: EngineFactory = get_engine,
         catalog: DatabaseCatalog = introspect,
+        cache: ResponseCache = NULL_CACHE,
     ) -> None:
         super().__init__(settings)
         self._engine_factory = engine_factory
         self._catalog = catalog
+        # Catalog metadata only (list_tables/describe_table); query results
+        # are live data and are never cached.
+        self._cache = cache
+        self._cache_scope = scope_fingerprint("db", settings.db_dsn, settings.pii_redaction)
         # Caps DB tool calls in flight for this service instance (the
         # container keeps one per process), so a burst of calls fails fast
         # with `server_busy` instead of queueing on the connection pool.
@@ -110,6 +116,12 @@ class DatabaseService(BaseService):
         ).to_response()
 
     async def list_tables(self, schema: str | None = None) -> dict:
+        return await self._cache.acached(
+            "db.list_tables", self._cache_scope, [schema], self.settings.cache_metadata_ttl_s,
+            lambda: self._list_tables(schema),
+        )
+
+    async def _list_tables(self, schema: str | None) -> dict:
         try:
             async with self._query_slot():
                 tables = await self._catalog.list_tables(schema, self.settings)
@@ -120,6 +132,12 @@ class DatabaseService(BaseService):
         return self.ok({"tables": [t.to_dict() for t in tables]}, {"row_count": len(tables)})
 
     async def describe_table(self, table: str) -> dict:
+        return await self._cache.acached(
+            "db.describe_table", self._cache_scope, [table.lower()], self.settings.cache_metadata_ttl_s,
+            lambda: self._describe_table(table),
+        )
+
+    async def _describe_table(self, table: str) -> dict:
         try:
             async with self._query_slot():
                 detail = await self._catalog.describe_table(table, self.settings)

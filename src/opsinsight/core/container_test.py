@@ -60,3 +60,22 @@ def test_container_accepts_a_pre_built_service():
     fake_nr_service = NewRelicService(get_settings())
     container = Container(newrelic_service=fake_nr_service)
     assert container.newrelic_service is fake_nr_service
+
+
+def test_services_share_one_response_cache():
+    from opsinsight.core.config import Settings
+    from opsinsight.core.container import Container
+
+    container = Container(settings=Settings(cache_backend="memory"))
+
+    assert container.response_cache.backend_name == "memory"
+    assert container.database_service._cache is container.response_cache
+    assert container.cloudwatch_logs_service._cache is container.response_cache
+    assert container.newrelic_service._cache is container.response_cache
+
+
+def test_cache_backend_none_disables_caching():
+    from opsinsight.core.config import Settings
+    from opsinsight.core.container import Container
+
+    assert Container(settings=Settings(cache_backend="none")).response_cache.enabled is False
