@@ -101,7 +101,7 @@ CASES = [
 
 
 def test_every_registered_tool_has_a_wiring_case():
-    from opsinsight.core.audit_test import EXPECTED_TOOLS
+    from opsinsight.tests.core.audit_test import EXPECTED_TOOLS
 
     assert {case[0] for case in CASES} == EXPECTED_TOOLS
 

@@ -8,8 +8,8 @@ from opsinsight import prompts as _prompts  # noqa: F401  (registers prompts)
 from opsinsight import resources as _resources  # noqa: F401  (registers resources)
 from opsinsight import tools as _tools  # noqa: F401  (registers tools)
 from opsinsight.core.app import mcp
-from opsinsight.core.audit_test import EXPECTED_PROMPTS
 from opsinsight.prompts.common import INVESTIGATION_RULES, quote_input
+from opsinsight.tests.core.audit_test import EXPECTED_PROMPTS
 
 # Minimal required arguments for each prompt.
 REQUIRED_ARGS = {
