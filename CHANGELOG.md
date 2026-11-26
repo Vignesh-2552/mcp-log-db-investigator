@@ -6,6 +6,8 @@ to PyPI only once, so every release gets a new number.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-26
+
 ### Fixed
 - README images (logo, architecture diagram) and doc links now use absolute GitHub URLs, so
   they render on the PyPI project page instead of showing as broken images.
@@ -221,7 +223,8 @@ First PyPI release.
 ### Changed
 - Minimum Python lowered from 3.13 to 3.11.
 
-[Unreleased]: https://github.com/Vignesh-2552/mcp-log-db-investigator/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/Vignesh-2552/mcp-log-db-investigator/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/Vignesh-2552/mcp-log-db-investigator/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/Vignesh-2552/mcp-log-db-investigator/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/Vignesh-2552/mcp-log-db-investigator/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Vignesh-2552/mcp-log-db-investigator/compare/v0.1.1...v0.2.0
