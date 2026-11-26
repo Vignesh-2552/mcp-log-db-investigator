@@ -1,11 +1,11 @@
 <div align="center">
 
-<img src="docs/assets/logo-512.png" alt="opsinsight-mcp logo" width="120">
+<img src="https://raw.githubusercontent.com/Vignesh-2552/mcp-log-db-investigator/main/docs/assets/logo-512.png" alt="opsinsight-mcp logo" width="120">
 
 # Investigation MCP Server
 
 [![CI](https://github.com/Vignesh-2552/mcp-log-db-investigator/actions/workflows/ci.yml/badge.svg)](https://github.com/Vignesh-2552/mcp-log-db-investigator/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/Vignesh-2552/mcp-log-db-investigator/blob/main/LICENSE)
 ![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)
 ![Read-only](https://img.shields.io/badge/access-read--only-brightgreen)
 ![MCP](https://img.shields.io/badge/protocol-MCP-orange)
@@ -52,10 +52,10 @@ Features include:
 
 The server does **not** generate queries itself. The client model (Claude
 Desktop, Cursor) writes the query, using schema/field-discovery tools and a
-curated [query cookbook](src/opsinsight/data/query_cookbook.yaml) this server exposes as
+curated [query cookbook](https://github.com/Vignesh-2552/mcp-log-db-investigator/blob/main/src/opsinsight/data/query_cookbook.yaml) this server exposes as
 grounding context — the server's job is to make sure the model has enough
 context to write a *correct* query, and to validate + execute whatever it
-writes safely. See [`docs/design.md`](docs/design.md) (§3.1) for the full
+writes safely. See [`docs/design.md`](https://github.com/Vignesh-2552/mcp-log-db-investigator/blob/main/docs/design.md) (§3.1) for the full
 rationale.
 
 Cross-source correlation of one identifier is `trace_request`, which searches
@@ -63,11 +63,11 @@ the DB and both log sources at once and returns a single timeline. For whole
 investigations, three **MCP prompts** show up as slash commands in clients that
 support them: `/investigate_incident` (support ticket → incident report),
 `/trace_user_journey` (one id across every source) and `/slow_endpoint_rca`
-(endpoint latency → bottleneck). See [`docs/tool-reference.md`](docs/tool-reference.md#mcp-prompts).
+(endpoint latency → bottleneck). See [`docs/tool-reference.md`](https://github.com/Vignesh-2552/mcp-log-db-investigator/blob/main/docs/tool-reference.md#mcp-prompts).
 
 ## Architecture
 
-![Architecture: MCP client to Investigation MCP Server, fanning out to PostgreSQL, AWS CloudWatch, and New Relic](docs/assets/architecture.svg)
+![Architecture: MCP client to Investigation MCP Server, fanning out to PostgreSQL, AWS CloudWatch, New Relic, and Linear/Jira with cross-source trace correlation](https://raw.githubusercontent.com/Vignesh-2552/mcp-log-db-investigator/main/docs/assets/architecture.svg)
 
 ## Quick Start
 
@@ -108,7 +108,7 @@ uvx --version
 | GitHub `main` | `["--from", "git+https://github.com/Vignesh-2552/mcp-log-db-investigator", "opsinsight-mcp"]` | The newest merged code |
 | A branch or tag | `["--from", "git+https://github.com/Vignesh-2552/mcp-log-db-investigator@<branch-or-tag>", "opsinsight-mcp"]` | Testing unreleased work |
 
-Changes listed under **Unreleased** in [`CHANGELOG.md`](CHANGELOG.md) aren't on
+Changes listed under **Unreleased** in [`CHANGELOG.md`](https://github.com/Vignesh-2552/mcp-log-db-investigator/blob/main/CHANGELOG.md) aren't on
 PyPI yet; use the GitHub form if you need them. Upgrading from 0.1.x? Read the
 **Breaking** entries under 0.2.0 first. HTTP mode now requires `MCP_AUTH_TOKEN`
 on non-loopback hosts.
@@ -397,7 +397,7 @@ Ask:
 ## MCP Server API
 
 For a junior-friendly reference with inputs, output structures, examples, and
-tool update guidance, see [`docs/tool-reference.md`](docs/tool-reference.md).
+tool update guidance, see [`docs/tool-reference.md`](https://github.com/Vignesh-2552/mcp-log-db-investigator/blob/main/docs/tool-reference.md).
 
 | Tool Name | Description |
 |---|---|
@@ -437,7 +437,7 @@ and only read endpoints are called. Results and any log messages are redacted
 (`MCP_AUTH_TOKEN`) and strict Host/Origin checks guard the endpoint, and every
 tool call and resource read is written as a structured audit event to the
 `investigation_server.audit` logger (stderr). The latest audit is in
-[`docs/security-audit.md`](docs/security-audit.md). See [`docs/design.md`](docs/design.md) §6 for the full model.
+[`docs/security-audit.md`](https://github.com/Vignesh-2552/mcp-log-db-investigator/blob/main/docs/security-audit.md). See [`docs/design.md`](https://github.com/Vignesh-2552/mcp-log-db-investigator/blob/main/docs/design.md) §6 for the full model.
 
 ## Development
 
@@ -454,14 +454,14 @@ Each test file sits next to the module it tests (`guardrail.py` → `guardrail_t
 - `src/opsinsight/service/database_service_integration_test.py` — runs against
   your configured Postgres; skipped automatically if it isn't reachable.
 
-CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs lint + both
+CI ([`.github/workflows/ci.yml`](https://github.com/Vignesh-2552/mcp-log-db-investigator/blob/main/.github/workflows/ci.yml)) runs lint + both
 test suites on every push/PR to `main`/`dev`.
 
-See [`CLAUDE.md`](CLAUDE.md) for the architecture/layering conventions this
-codebase follows, and [`docs/tool-reference.md`](docs/tool-reference.md) for
+See [`CLAUDE.md`](https://github.com/Vignesh-2552/mcp-log-db-investigator/blob/main/CLAUDE.md) for the architecture/layering conventions this
+codebase follows, and [`docs/tool-reference.md`](https://github.com/Vignesh-2552/mcp-log-db-investigator/blob/main/docs/tool-reference.md) for
 how to add a new tool. Contributing a change? See
-[`CONTRIBUTING.md`](CONTRIBUTING.md).
+[`CONTRIBUTING.md`](https://github.com/Vignesh-2552/mcp-log-db-investigator/blob/main/CONTRIBUTING.md).
 
 ## License
 
-[MIT](LICENSE)
+[MIT](https://github.com/Vignesh-2552/mcp-log-db-investigator/blob/main/LICENSE)

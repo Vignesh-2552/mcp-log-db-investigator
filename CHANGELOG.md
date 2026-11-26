@@ -6,6 +6,10 @@ to PyPI only once, so every release gets a new number.
 
 ## [Unreleased]
 
+### Fixed
+- README images (logo, architecture diagram) and doc links now use absolute GitHub URLs, so
+  they render on the PyPI project page instead of showing as broken images.
+
 ### Added
 - **Linear / Jira ticket tools** (read-only): `ticket_get_issue`, `ticket_search_issues`,
   `ticket_list_comments`. Configure `LINEAR_API_KEY` and/or `JIRA_BASE_URL` + `JIRA_EMAIL` +
