@@ -104,7 +104,7 @@ uvx --version
 
 | Source | `args` value | When to use |
 |---|---|---|
-| PyPI release | `["opsinsight-mcp==0.3.1"]` | A stable, pinned version |
+| PyPI release | `["opsinsight-mcp==0.4.0"]` | A stable, pinned version |
 | GitHub `main` | `["--from", "git+https://github.com/Vignesh-2552/mcp-log-db-investigator", "opsinsight-mcp"]` | The newest merged code |
 | A branch or tag | `["--from", "git+https://github.com/Vignesh-2552/mcp-log-db-investigator@<branch-or-tag>", "opsinsight-mcp"]` | Testing unreleased work |
 
@@ -116,7 +116,7 @@ on non-loopback hosts.
 To check that the package installs (this downloads it and exits, without starting the server):
 
 ```powershell
-uvx --from opsinsight-mcp==0.3.1 python -c "import importlib.metadata as m; print(m.version('opsinsight-mcp'))"
+uvx --from opsinsight-mcp==0.4.0 python -c "import importlib.metadata as m; print(m.version('opsinsight-mcp'))"
 ```
 
 #### Step 3: Get credentials for the sources you use
@@ -141,7 +141,7 @@ Leave out the variables for sources you don't use.
   "mcpServers": {
     "investigation": {
       "command": "uvx",
-      "args": ["opsinsight-mcp==0.3.1"],
+      "args": ["opsinsight-mcp==0.4.0"],
       "env": {
         "DB_URL": "postgresql+asyncpg://readonly_user:pass@host:5432/dbname",
         "CLOUDWATCH_REGION": "ap-south-1",
@@ -160,8 +160,7 @@ Leave out the variables for sources you don't use.
 }
 ```
 
-The `LINEAR_*` / `JIRA_*` variables enable the `ticket_*` tools. These are **unreleased**:
-0.3.1 ignores them, so use the GitHub `main` form from Step 2 until the next release.
+The `LINEAR_*` / `JIRA_*` variables enable the `ticket_*` tools (0.4.0 and later).
 Configure Linear, Jira, or both; with both, also set `"TICKET_PROVIDER": "linear"` (or
 `"jira"`), or each ticket call must name the provider. Get a Linear key under
 *Settings → Security & access → Personal API keys*, and a Jira token at
@@ -171,7 +170,7 @@ Configure Linear, Jira, or both; with both, also set `"TICKET_PROVIDER": "linear
 `--scope user` to make it available in every project:
 
 ```powershell
-claude mcp add investigation --scope user -e DB_URL=postgresql+asyncpg://readonly_user:pass@host:5432/dbname -- uvx opsinsight-mcp==0.3.1
+claude mcp add investigation --scope user -e DB_URL=postgresql+asyncpg://readonly_user:pass@host:5432/dbname -- uvx opsinsight-mcp==0.4.0
 ```
 
 Any tuning variable from `.env.example` can also go in `env`, for example
@@ -180,8 +179,8 @@ Any tuning variable from `.env.example` can also go in `env`, for example
 #### Step 5: Restart the client and test it
 
 1. Fully quit and reopen Claude Desktop or Cursor; closing the window isn't enough.
-2. Check that the `investigation` server shows **17 tools** on 0.3.1 (`db_*`, `cw_*`, `nr_*`,
-   `trace_request`), or **20** on unreleased versions (plus `ticket_*`).
+2. Check that the `investigation` server shows **20 tools** on 0.4.0 (`db_*`, `cw_*`, `nr_*`,
+   `trace_request`, `ticket_*`).
 3. Ask a simple question, such as *"List the database tables"* (which calls
    `db_list_tables`) or *"Which CloudWatch log groups can you read?"*.
 
@@ -199,7 +198,7 @@ To run one shared HTTP server instead of a stdio process per client, use the
 because settings load from `.env` in the current directory:
 
 ```powershell
-uvx --from opsinsight-mcp==0.3.1 investigation-server
+uvx --from opsinsight-mcp==0.4.0 investigation-server
 ```
 
 The same HTTP rules apply as when [running from source](#installation): it serves
@@ -267,7 +266,7 @@ uv run investigation-server doctor
 Example output:
 
 ```text
-opsinsight-mcp doctor (v0.3.1)
+opsinsight-mcp doctor (v0.4.0)
 ================================================================================
 Service                Status    Latency    Details
 --------------------------------------------------------------------------------
