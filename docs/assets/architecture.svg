@@ -1,62 +1,150 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 610" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 750" width="100%" height="100%" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
   <defs>
-    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="#64748b"/>
     </marker>
+    <filter id="shadow" x="-2%" y="-1%" width="104%" height="104%" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.05"/>
+    </filter>
   </defs>
 
-  <!-- card background so the diagram reads the same on GitHub light + dark theme -->
-  <rect x="0" y="0" width="1000" height="610" rx="16" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.5"/>
+  <!-- Background Canvas -->
+  <rect x="0" y="0" width="1180" height="750" rx="16" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.5"/>
 
-  <!-- engineer / MCP client -->
-  <rect x="330" y="28" width="340" height="64" rx="10" fill="#eef2f7" stroke="#334155" stroke-width="1.5"/>
-  <text x="500" y="55" text-anchor="middle" font-size="15" font-weight="600" fill="#1e293b">Engineer, in Cursor / Claude Desktop</text>
-  <text x="500" y="76" text-anchor="middle" font-size="12" fill="#475569">"why did checkout fail for order 88213?"</text>
+  <!-- ==================== 1. CLIENT LAYER ==================== -->
+  <rect x="230" y="24" width="720" height="84" rx="12" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5" filter="url(#shadow)"/>
+  
+  <text x="590" y="48" text-anchor="middle" font-size="15" font-weight="700" fill="#0f172a">Engineer &amp; AI Client (Cursor · Claude Desktop · Claude Code)</text>
+  <text x="590" y="69" text-anchor="middle" font-size="12.5" font-style="italic" fill="#475569">"Investigate ENG-123: checkout failed for order 88213 around 14:30 yesterday"</text>
+  
+  <!-- Client grounded tags -->
+  <rect x="250" y="80" width="330" height="20" rx="10" fill="#e2e8f0"/>
+  <text x="415" y="94" text-anchor="middle" font-size="11" font-weight="600" fill="#334155">⚡ Prompts: /investigate_incident · /trace_user_journey</text>
+  
+  <rect x="600" y="80" width="330" height="20" rx="10" fill="#e2e8f0"/>
+  <text x="765" y="94" text-anchor="middle" font-size="11" font-weight="600" fill="#334155">📚 Resources: query-cookbook · schema · logs</text>
 
-  <line x1="500" y1="92" x2="500" y2="146" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
-  <text x="512" y="122" font-size="11" fill="#64748b">MCP (streamable HTTP)</text>
+  <!-- Connection: Client -> Server -->
+  <line x1="590" y1="108" x2="590" y2="152" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="420" y="118" width="340" height="24" rx="12" fill="#ffffff" stroke="#cbd5e1" stroke-width="1"/>
+  <text x="590" y="134" text-anchor="middle" font-size="11" font-weight="600" fill="#475569">MCP Protocol · stdio (uvx) or Streamable HTTP (:8001)</text>
 
-  <!-- investigation server -->
-  <rect x="280" y="150" width="440" height="86" rx="10" fill="#0f172a"/>
-  <text x="500" y="182" text-anchor="middle" font-size="17" font-weight="700" fill="#ffffff">Investigation MCP Server</text>
-  <text x="500" y="204" text-anchor="middle" font-size="12" fill="#cbd5e1">read-only tools · guardrail-validated · PII-redacted</text>
-  <text x="500" y="222" text-anchor="middle" font-size="12" fill="#cbd5e1">the client model writes the query; this server only validates + executes it</text>
+  <!-- ==================== 2. SERVER LAYER ==================== -->
+  <rect x="40" y="154" width="1100" height="152" rx="14" fill="#0f172a" filter="url(#shadow)"/>
+  
+  <text x="590" y="184" text-anchor="middle" font-size="17" font-weight="700" fill="#ffffff">Investigation MCP Server (opsinsight-mcp)</text>
+  <text x="590" y="204" text-anchor="middle" font-size="12" fill="#94a3b8">FastMCP Core · Pure AST/Regex Guardrails · Automatic PII Redaction · Non-Destructive Read-Only</text>
 
-  <!-- fan-out arrows to the three sources -->
-  <line x1="500" y1="238" x2="170" y2="300" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
-  <line x1="500" y1="238" x2="500" y2="300" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
-  <line x1="500" y1="238" x2="830" y2="300" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <!-- Server Internal Pill 1: Guardrails -->
+  <rect x="65" y="218" width="320" height="70" rx="8" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+  <text x="80" y="240" font-size="13" font-weight="700" fill="#38bdf8">🛡️ Pure Guardrails (Pre-Execution)</text>
+  <text x="80" y="260" font-size="11.5" fill="#cbd5e1">• AST-parsed SQL (sqlglot) &amp; regex NRQL</text>
+  <text x="80" y="276" font-size="11.5" fill="#cbd5e1">• CW allowlist &amp; bytes-scanned cost ceiling</text>
 
-  <!-- PostgreSQL -->
-  <rect x="30" y="304" width="280" height="152" rx="10" fill="#f8fafc" stroke="#336791" stroke-width="2"/>
-  <circle cx="52" cy="332" r="6" fill="#336791"/>
-  <text x="66" y="337" font-size="16" font-weight="700" fill="#1e293b">PostgreSQL</text>
-  <text x="50" y="364" font-size="12.5" fill="#334155">• Schema discovery (tables, FKs, indexes)</text>
-  <text x="50" y="386" font-size="12.5" fill="#334155">• Validated, read-only SELECT queries</text>
-  <text x="50" y="408" font-size="12.5" fill="#334155">• Sample rows, identifier / store lookup</text>
-  <text x="50" y="430" font-size="12.5" fill="#334155">• PII redaction on every row returned</text>
+  <!-- Server Internal Pill 2: trace_request -->
+  <rect x="430" y="218" width="320" height="70" rx="8" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+  <text x="445" y="240" font-size="13" font-weight="700" fill="#a78bfa">⚡ Cross-Source Engine (trace_request)</text>
+  <text x="445" y="260" font-size="11.5" fill="#cbd5e1">• Parallel query fan-out across DB &amp; logs</text>
+  <text x="445" y="276" font-size="11.5" fill="#cbd5e1">• Merged chronological unified timeline</text>
 
-  <!-- CloudWatch -->
-  <rect x="360" y="304" width="280" height="152" rx="10" fill="#f8fafc" stroke="#ff9900" stroke-width="2"/>
-  <circle cx="382" cy="332" r="6" fill="#ff9900"/>
-  <text x="396" y="337" font-size="16" font-weight="700" fill="#1e293b">AWS CloudWatch</text>
-  <text x="380" y="364" font-size="12.5" fill="#334155">• Log group discovery + field shapes</text>
-  <text x="380" y="386" font-size="12.5" fill="#334155">• Logs Insights queries (cost-capped)</text>
-  <text x="380" y="408" font-size="12.5" fill="#334155">• Trace lookup by request/order id</text>
-  <text x="380" y="430" font-size="12.5" fill="#334155">• Metric statistics (latency, error rate)</text>
+  <!-- Server Internal Pill 3: Redaction & Security -->
+  <rect x="795" y="218" width="320" height="70" rx="8" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+  <text x="810" y="240" font-size="13" font-weight="700" fill="#4ade80">🔒 Data Protection &amp; Transport Security</text>
+  <text x="810" y="260" font-size="11.5" fill="#cbd5e1">• PII &amp; secret masking on rows/logs</text>
+  <text x="810" y="276" font-size="11.5" fill="#cbd5e1">• Bearer auth, DNS-rebind &amp; audit logging</text>
 
-  <!-- New Relic -->
-  <rect x="690" y="304" width="280" height="152" rx="10" fill="#f8fafc" stroke="#008c99" stroke-width="2"/>
-  <circle cx="712" cy="332" r="6" fill="#008c99"/>
-  <text x="726" y="337" font-size="16" font-weight="700" fill="#1e293b">New Relic</text>
-  <text x="710" y="364" font-size="12.5" fill="#334155">• Event type + log field discovery</text>
-  <text x="710" y="386" font-size="12.5" fill="#334155">• Validated, read-only NRQL queries</text>
-  <text x="710" y="408" font-size="12.5" fill="#334155">• Correlation/trace id detection</text>
-  <text x="710" y="430" font-size="12.5" fill="#334155">• keyset() field grounding</text>
+  <!-- Connection: Server -> 4 Sources -->
+  <line x1="167" y1="306" x2="167" y2="348" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="449" y1="306" x2="449" y2="348" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="731" y1="306" x2="731" y2="348" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="1013" y1="306" x2="1013" y2="348" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
 
-  <!-- synthesis note -->
-  <rect x="30" y="486" width="940" height="94" rx="10" fill="#eef2f7" stroke="#94a3b8" stroke-width="1"/>
-  <text x="500" y="518" text-anchor="middle" font-size="13" font-weight="600" fill="#1e293b">The client model correlates evidence across all three sources itself</text>
-  <text x="500" y="540" text-anchor="middle" font-size="12" fill="#475569">The server never merges DB, CloudWatch and New Relic results — each tool call returns evidence from one</text>
-  <text x="500" y="558" text-anchor="middle" font-size="12" fill="#475569">source; the model fans out, cross-references timestamps/ids, and writes the root-cause summary.</text>
+  <!-- ==================== 3. FOUR DATA SOURCES ==================== -->
+  
+  <!-- Source 1: PostgreSQL -->
+  <rect x="37" y="350" width="260" height="220" rx="10" fill="#ffffff" stroke="#336791" stroke-width="2" filter="url(#shadow)"/>
+  <circle cx="56" cy="374" r="6" fill="#336791"/>
+  <text x="70" y="379" font-size="15" font-weight="700" fill="#0f172a">PostgreSQL</text>
+  <rect x="180" y="364" width="102" height="18" rx="9" fill="#e0f2fe"/>
+  <text x="231" y="377" text-anchor="middle" font-size="10" font-weight="600" fill="#0369a1">db_* tools</text>
+  <line x1="47" y1="394" x2="287" y2="394" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="50" y="416" font-size="12" fill="#334155">• Schema discovery (tables, FKs)</text>
+  <text x="50" y="438" font-size="12" fill="#334155">• Validated read-only SELECT</text>
+  <text x="50" y="460" font-size="12" fill="#334155">• EXPLAIN query execution plan</text>
+  <text x="50" y="482" font-size="12" fill="#334155">• Catalog search by identifier</text>
+  <text x="50" y="504" font-size="12" fill="#334155">• Resolve store name to ID</text>
+  <text x="50" y="526" font-size="12" fill="#334155">• PII masking on sample &amp; rows</text>
+  <rect x="47" y="538" width="240" height="22" rx="4" fill="#f8fafc" stroke="#cbd5e1"/>
+  <text x="167" y="553" text-anchor="middle" font-size="10.5" fill="#64748b">Replica role · Session hardened</text>
+
+  <!-- Source 2: AWS CloudWatch -->
+  <rect x="319" y="350" width="260" height="220" rx="10" fill="#ffffff" stroke="#ea580c" stroke-width="2" filter="url(#shadow)"/>
+  <circle cx="338" cy="374" r="6" fill="#ea580c"/>
+  <text x="352" y="379" font-size="15" font-weight="700" fill="#0f172a">AWS CloudWatch</text>
+  <rect x="487" y="364" width="78" height="18" rx="9" fill="#ffedd5"/>
+  <text x="526" y="377" text-anchor="middle" font-size="10" font-weight="600" fill="#c2410c">cw_* tools</text>
+  <line x1="329" y1="394" x2="569" y2="394" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="332" y="416" font-size="12" fill="#334155">• Log group discovery &amp; shapes</text>
+  <text x="332" y="438" font-size="12" fill="#334155">• Logs Insights queries (cost-capped)</text>
+  <text x="332" y="460" font-size="12" fill="#334155">• Chronological trace event extraction</text>
+  <text x="332" y="482" font-size="12" fill="#334155">• Fast pattern filtering (grep)</text>
+  <text x="332" y="504" font-size="12" fill="#334155">• Metric statistics (latency, 5xx)</text>
+  <text x="332" y="526" font-size="12" fill="#334155">• Correlation ID extraction</text>
+  <rect x="329" y="538" width="240" height="22" rx="4" fill="#f8fafc" stroke="#cbd5e1"/>
+  <text x="449" y="553" text-anchor="middle" font-size="10.5" fill="#64748b">Allowlisted groups · Byte ceiling</text>
+
+  <!-- Source 3: New Relic -->
+  <rect x="601" y="350" width="260" height="220" rx="10" fill="#ffffff" stroke="#008c99" stroke-width="2" filter="url(#shadow)"/>
+  <circle cx="620" cy="374" r="6" fill="#008c99"/>
+  <text x="634" y="379" font-size="15" font-weight="700" fill="#0f172a">New Relic</text>
+  <rect x="774" y="364" width="74" height="18" rx="9" fill="#cffafe"/>
+  <text x="811" y="377" text-anchor="middle" font-size="10" font-weight="600" fill="#0e7490">nr_* tools</text>
+  <line x1="611" y1="394" x2="851" y2="394" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="614" y="416" font-size="12" fill="#334155">• Event type discovery (SHOW EVENTS)</text>
+  <text x="614" y="438" font-size="12" fill="#334155">• keyset() field grounding</text>
+  <text x="614" y="460" font-size="12" fill="#334155">• Validated read-only NRQL</text>
+  <text x="614" y="482" font-size="12" fill="#334155">• Trace &amp; correlation ID attributes</text>
+  <text x="614" y="504" font-size="12" fill="#334155">• Transaction &amp; APM error rates</text>
+  <text x="614" y="526" font-size="12" fill="#334155">• Window &amp; LIMIT clamping</text>
+  <rect x="611" y="538" width="240" height="22" rx="4" fill="#f8fafc" stroke="#cbd5e1"/>
+  <text x="731" y="553" text-anchor="middle" font-size="10.5" fill="#64748b">NerdGraph GraphQL · User Key</text>
+
+  <!-- Source 4: Linear & Jira Cloud -->
+  <rect x="883" y="350" width="260" height="220" rx="10" fill="#ffffff" stroke="#6366f1" stroke-width="2" filter="url(#shadow)"/>
+  <circle cx="902" cy="374" r="6" fill="#6366f1"/>
+  <text x="916" y="379" font-size="15" font-weight="700" fill="#0f172a">Linear &amp; Jira</text>
+  <rect x="1038" y="364" width="90" height="18" rx="9" fill="#ede9fe"/>
+  <text x="1083" y="377" text-anchor="middle" font-size="10" font-weight="600" fill="#6d28d9">ticket_* tools</text>
+  <line x1="893" y1="394" x2="1133" y2="394" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="896" y="416" font-size="12" fill="#334155">• Load issue by key (ENG-123)</text>
+  <text x="896" y="438" font-size="12" fill="#334155">• Fetch title, status, description</text>
+  <text x="896" y="460" font-size="12" fill="#334155">• Issue search (text query / JQL)</text>
+  <text x="896" y="482" font-size="12" fill="#334155">• Chronological comment threads</text>
+  <text x="896" y="504" font-size="12" fill="#334155">• ADF flattened to plain text</text>
+  <text x="896" y="526" font-size="12" fill="#334155">• Prompt injection untrusted flag</text>
+  <rect x="893" y="538" width="240" height="22" rx="4" fill="#f8fafc" stroke="#cbd5e1"/>
+  <text x="1013" y="553" text-anchor="middle" font-size="10.5" fill="#64748b">Read-only endpoints · PII masked</text>
+
+  <!-- Connection: 4 Sources -> Synthesis Layer -->
+  <line x1="167" y1="570" x2="167" y2="598" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="449" y1="570" x2="449" y2="598" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="731" y1="570" x2="731" y2="598" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="1013" y1="570" x2="1013" y2="598" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- ==================== 4. SYNTHESIS & RCA LAYER ==================== -->
+  <rect x="37" y="600" width="1106" height="126" rx="12" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5" filter="url(#shadow)"/>
+  
+  <text x="590" y="624" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">Dual-Path Investigation &amp; Evidence Correlation</text>
+  
+  <!-- Sub-block 1: trace_request -->
+  <rect x="57" y="636" width="518" height="74" rx="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1"/>
+  <text x="73" y="658" font-size="12.5" font-weight="700" fill="#4338ca">⚡ Automated Single-Timeline Correlation (trace_request)</text>
+  <text x="73" y="677" font-size="11.5" fill="#475569">Searches PostgreSQL and both log platforms concurrently for a single ID.</text>
+  <text x="73" y="694" font-size="11.5" fill="#475569">Assembles a single chronological timeline with per-source status and error isolation.</text>
+
+  <!-- Sub-block 2: Client Model Synthesis -->
+  <rect x="605" y="636" width="518" height="74" rx="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1"/>
+  <text x="621" y="658" font-size="12.5" font-weight="700" fill="#0369a1">🧠 Model-Driven Root Cause Analysis (RCA)</text>
+  <text x="621" y="677" font-size="11.5" fill="#475569">The client model fans out across individual tools when exploring custom hypotheses,</text>
+  <text x="621" y="694" font-size="11.5" fill="#475569">cross-references ticket claims with log/DB state, and synthesizes the final incident report.</text>
 </svg>
